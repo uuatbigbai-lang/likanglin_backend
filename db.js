@@ -66,6 +66,74 @@ const Product = sequelize.define("Product", {
     defaultValue: 0,
     comment: "排序权重，越大越靠前",
   },
+  // ---- 详情页所需字段 ----
+  originalPrice: {
+    type: DataTypes.DECIMAL(10, 2),
+    allowNull: true,
+    comment: "划线价/原价",
+  },
+  primaryImage: {
+    type: DataTypes.STRING(500),
+    allowNull: true,
+    comment: "商品主图URL",
+  },
+  images: {
+    type: DataTypes.JSON,
+    allowNull: true,
+    defaultValue: [],
+    comment: "商品轮播图列表JSON",
+  },
+  minSalePrice: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+    comment: "最低销售价（单位：分）",
+  },
+  maxSalePrice: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+    comment: "最高销售价（单位：分）",
+  },
+  maxLinePrice: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+    comment: "最高划线价（单位：分）",
+  },
+  soldNum: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+    defaultValue: 0,
+    comment: "已售数量",
+  },
+  spuStockQuantity: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+    defaultValue: 0,
+    comment: "SPU总库存",
+  },
+  isPutOnSale: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+    defaultValue: 1,
+    comment: "是否上架 1上架 0下架",
+  },
+  specList: {
+    type: DataTypes.JSON,
+    allowNull: true,
+    defaultValue: [],
+    comment: "商品规格列表JSON",
+  },
+  skuList: {
+    type: DataTypes.JSON,
+    allowNull: true,
+    defaultValue: [],
+    comment: "SKU列表JSON",
+  },
+  desc: {
+    type: DataTypes.JSON,
+    allowNull: true,
+    defaultValue: [],
+    comment: "商品详情图片列表JSON",
+  },
 });
 
 // 数据库初始化方法
