@@ -53,11 +53,6 @@ const Product = sequelize.define("Product", {
     allowNull: false,
     comment: "商品价格",
   },
-  thumb: {
-    type: DataTypes.STRING(500),
-    allowNull: true,
-    comment: "缩略图URL",
-  },
   badge: {
     type: DataTypes.STRING(50),
     allowNull: true,
@@ -82,16 +77,29 @@ const Product = sequelize.define("Product", {
     allowNull: true,
     comment: "划线价/原价",
   },
-  primaryImage: {
-    type: DataTypes.STRING(500),
+  useThumb: {
+    type: DataTypes.BOOLEAN,
     allowNull: true,
-    comment: "商品主图URL",
+    defaultValue: false,
+    comment: "是否使用独立缩略图",
   },
-  images: {
-    type: DataTypes.JSON,
+  bannerLength: {
+    type: DataTypes.INTEGER,
     allowNull: true,
-    defaultValue: [],
-    comment: "商品轮播图列表JSON",
+    defaultValue: 0,
+    comment: "商品轮播图数量",
+  },
+  detailPicLength: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+    defaultValue: 0,
+    comment: "商品详情图片数量",
+  },
+  usePicture: {
+    type: DataTypes.BOOLEAN,
+    allowNull: true,
+    defaultValue: false,
+    comment: "是否使用独立SKU图片",
   },
   minSalePrice: {
     type: DataTypes.INTEGER,
@@ -137,12 +145,6 @@ const Product = sequelize.define("Product", {
     allowNull: true,
     defaultValue: [],
     comment: "SKU列表JSON",
-  },
-  desc: {
-    type: DataTypes.JSON,
-    allowNull: true,
-    defaultValue: [],
-    comment: "商品详情图片列表JSON",
   },
 });
 
@@ -296,6 +298,21 @@ const Order = sequelize.define("Order", {
     type: DataTypes.STRING(200),
     defaultValue: "",
     comment: "订单备注",
+  },
+  prepayId: {
+    type: DataTypes.STRING(128),
+    allowNull: true,
+    comment: "微信支付预支付交易会话标识",
+  },
+  transactionId: {
+    type: DataTypes.STRING(128),
+    allowNull: true,
+    comment: "微信支付订单号",
+  },
+  paidAt: {
+    type: DataTypes.DATE,
+    allowNull: true,
+    comment: "支付成功时间",
   },
 });
 

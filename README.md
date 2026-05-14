@@ -116,6 +116,29 @@ curl -X POST -H 'content-type: application/json' -d '{"action": "inc"}' https://
 - MYSQL_USERNAME
 以上三个变量的值请按实际情况填写。如果使用云托管内MySQL，可以在控制台MySQL页面获取相关信息。
 
+## 微信支付配置
+
+订单接口已支持小程序 JSAPI 微信支付。部署到微信云托管后，在服务环境变量中补全：
+
+- `WECHAT_APP_ID`：小程序 AppID
+- `WECHAT_APP_SECRET`：小程序 AppSecret，本地 `wx.request` 调试时用于 `code2session` 换取 openid；云托管正式调用会优先使用 `x-wx-openid`
+- `WECHAT_PAY_MCH_ID`：微信支付商户号
+- `WECHAT_PAY_SERIAL_NO`：商户 API 证书序列号
+- `WECHAT_PAY_PRIVATE_KEY_PATH`：商户 API 私钥 `.pem` 文件路径。相对路径会以 `backend` 目录为基准解析，例如 `certs/apiclient_key.pem`
+- `WECHAT_PAY_PRIVATE_KEY`：可选兜底。直接配置商户 API 私钥内容，换行可写成 `\n`
+- `WECHAT_PAY_API_V3_KEY`：APIv3 密钥，用于解密支付通知
+- `WECHAT_PAY_NOTIFY_URL`：支付通知公网地址，例如 `https://<云托管域名>/api/pay/wechat/notify`
+- `WECHAT_PAY_MOCK`：可选。默认为模拟成功；设置为 `false` 后，支付参数缺失会直接报错
+- `WECHAT_PAY_LOCAL_TEST_AMOUNT_FEN`：可选。本地开发默认支付金额为 `1` 分，即 0.01 元；需要调整时可改这个值
+
+小程序端在结算页提交订单后，如果后端返回 `payInfo` 会调用 `wx.requestPayment`；未配置微信支付参数时仍保持本地开发的模拟支付成功跳转。本地没有 `MYSQL_ADDRESS` 时，后端向微信支付创建预支付单的金额固定为 0.01 元，订单原始总价仍按商品价格记录。
+
+本地调试可以在 `backend/.env` 中配置支付参数，例如：
+
+```env
+WECHAT_PAY_PRIVATE_KEY_PATH=certs/apiclient_key.pem
+```
+
 
 ## License
 
