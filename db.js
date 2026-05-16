@@ -316,6 +316,86 @@ const Order = sequelize.define("Order", {
   },
 });
 
+// 检测样本信息
+const Sample = sequelize.define("Sample", {
+  openid: {
+    type: DataTypes.STRING(128),
+    allowNull: true,
+    comment: "用户openid",
+  },
+  title: {
+    type: DataTypes.STRING(100),
+    defaultValue: "信息登记",
+    comment: "检测项目名称",
+  },
+  type: {
+    type: DataTypes.STRING(32),
+    defaultValue: "",
+    comment: "检测类型 gut/vaginal/inflammation",
+  },
+  sampleNo: {
+    type: DataTypes.STRING(64),
+    allowNull: false,
+    unique: true,
+    comment: "样本编号",
+  },
+  name: {
+    type: DataTypes.STRING(50),
+    defaultValue: "",
+  },
+  age: {
+    type: DataTypes.STRING(20),
+    defaultValue: "",
+  },
+  gender: {
+    type: DataTypes.STRING(10),
+    defaultValue: "",
+  },
+  phone: {
+    type: DataTypes.STRING(20),
+    defaultValue: "",
+  },
+  city: {
+    type: DataTypes.STRING(80),
+    defaultValue: "",
+  },
+  height: {
+    type: DataTypes.STRING(20),
+    defaultValue: "",
+  },
+  weight: {
+    type: DataTypes.STRING(20),
+    defaultValue: "",
+  },
+  antibiotics: {
+    type: DataTypes.STRING(10),
+    defaultValue: "",
+  },
+  channel: {
+    type: DataTypes.STRING(100),
+    defaultValue: "",
+  },
+  remark: {
+    type: DataTypes.STRING(500),
+    defaultValue: "",
+  },
+  extraInfo: {
+    type: DataTypes.JSON,
+    defaultValue: {},
+    comment: "不同检测项目的扩展表单信息",
+  },
+  status: {
+    type: DataTypes.STRING(20),
+    defaultValue: "已登记",
+    comment: "样本状态",
+  },
+  source: {
+    type: DataTypes.STRING(20),
+    defaultValue: "manual",
+    comment: "manual/import",
+  },
+});
+
 // 数据库初始化方法
 async function init() {
   await Counter.sync({ alter: true });
@@ -323,6 +403,7 @@ async function init() {
   await Address.sync({ alter: true });
   await CartItem.sync({ alter: true });
   await Order.sync({ alter: true });
+  await Sample.sync({ alter: true });
 }
 
 // 导出初始化方法和模型
@@ -333,4 +414,5 @@ module.exports = {
   Address,
   CartItem,
   Order,
+  Sample,
 };

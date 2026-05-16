@@ -3,7 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const morgan = require('morgan');
 const { Op } = require('sequelize');
-const { init: initDB, Counter, Product, Address, CartItem, Order } = require('./db');
+const { init: initDB, Counter, Product, Address, CartItem, Order, Sample } = require('./db');
 const { withCloudProductPictures } = require('./productPictures');
 const {
   wxPayConfig,
@@ -172,9 +172,56 @@ const formatOrderForMiniProgram = (order) => {
   };
 };
 
+const SAMPLE_TYPE_LABELS = {
+  gut: '肠道菌群检测',
+  vaginal: '阴道菌群检测',
+  inflammation: '肠道炎症检测',
+};
+
+const SAMPLE_LABEL_TYPES = Object.keys(SAMPLE_TYPE_LABELS).reduce((result, key) => {
+  result[SAMPLE_TYPE_LABELS[key]] = key;
+  return result;
+}, {});
+
+const resolveSampleType = (value = '') => {
+  const text = String(value || '').trim();
+  return SAMPLE_TYPE_LABELS[text] ? text : SAMPLE_LABEL_TYPES[text] || text;
+};
+
+const formatSample = (sample) => {
+  const data = typeof sample.toJSON === 'function' ? sample.toJSON() : sample;
+  return {
+    ...data,
+    _id: String(data.id),
+    title: data.title || SAMPLE_TYPE_LABELS[data.type] || '信息登记',
+  };
+};
+
+const normalizeSamplePayload = (body = {}) => {
+  const type = resolveSampleType(body.type || body['检测类型'] || body['检测项目']);
+  const extraInfo = body.extraInfo && typeof body.extraInfo === 'object' ? body.extraInfo : {};
+  return {
+    title: String(body.title || SAMPLE_TYPE_LABELS[type] || '信息登记').trim(),
+    type,
+    sampleNo: String(body.sampleNo || body['样本编号'] || '').trim(),
+    name: String(body.name || body['姓名'] || '').trim(),
+    age: String(body.age || body['年龄'] || '').trim(),
+    gender: String(body.gender || body['性别'] || '').trim(),
+    phone: String(body.phone || body['手机号'] || body['手机'] || '').trim(),
+    city: String(body.city || body['城市'] || '').trim(),
+    height: String(body.height || body['身高'] || '').trim(),
+    weight: String(body.weight || body['体重'] || '').trim(),
+    antibiotics: String(body.antibiotics || body['抗生素'] || '').trim(),
+    channel: String(body.channel || body['渠道'] || '').trim(),
+    remark: String(body.remark || body['备注'] || body['主诉'] || '').trim(),
+    extraInfo,
+  };
+};
+
 const app = express();
-app.use(express.urlencoded({ extended: false }));
+app.use(express.urlencoded({ extended: false, limit: '5mb' }));
 app.use(express.json({
+  limit: '5mb',
   verify: (req, res, buf) => {
     req.rawBody = buf.toString('utf8');
   },
@@ -673,6 +720,101 @@ app.post('/api/order/settle', async (req, res) => {
       },
     });
   } catch (err) {
+    res.send({ code: -1, message: err.message });
+  }
+});
+
+// ============ 检测样本接口 ============
+
+app.get('/api/samples', async (req, res) => {
+  try {
+    const pageNum = Math.max(Number(req.query.page) || 1, 1);
+    const pageSize = Math.max(Number(req.query.pageSize) || 10, 1);
+    const type = String(req.query.type || '').trim();
+    const where = type ? { type } : {};
+
+    const { rows, count } = await Sample.findAndCountAll({
+      where,
+      order: [['createdAt', 'DESC']],
+      offset: (pageNum - 1) * pageSize,
+      limit: pageSize,
+    });
+
+    res.send({
+      code: 0,
+      data: rows.map(formatSample),
+      total: count,
+    });
+  } catch (err) {
+    console.error('获取样本列表失败:', err);
+    res.send({ code: -1, message: err.message });
+  }
+});
+
+app.get('/api/samples/:id', async (req, res) => {
+  try {
+    const sample = await Sample.findByPk(req.params.id);
+    if (!sample) {
+      return res.send({ code: -1, message: '样本不存在' });
+    }
+    res.send({ code: 0, data: formatSample(sample) });
+  } catch (err) {
+    console.error('获取样本详情失败:', err);
+    res.send({ code: -1, message: err.message });
+  }
+});
+
+app.post('/api/samples', async (req, res) => {
+  try {
+    const openid = req.headers['x-wx-openid'] || 'local_dev_user';
+    const payload = normalizeSamplePayload(req.body);
+    if (!payload.sampleNo) {
+      return res.send({ code: -1, message: '请填写样本编号' });
+    }
+
+    const existing = await Sample.findOne({ where: { sampleNo: payload.sampleNo } });
+    if (existing) {
+      return res.send({ code: -1, message: '样本编号已存在' });
+    }
+
+    const sample = await Sample.create({
+      ...payload,
+      openid,
+      source: 'manual',
+    });
+    res.send({ code: 0, data: formatSample(sample) });
+  } catch (err) {
+    console.error('保存样本失败:', err);
+    res.send({ code: -1, message: err.message });
+  }
+});
+
+app.put('/api/samples/:id', async (req, res) => {
+  try {
+    const sample = await Sample.findByPk(req.params.id);
+    if (!sample) {
+      return res.send({ code: -1, message: '样本不存在' });
+    }
+
+    const payload = normalizeSamplePayload(req.body);
+    if (!payload.sampleNo) {
+      return res.send({ code: -1, message: '请填写样本编号' });
+    }
+
+    const duplicated = await Sample.findOne({
+      where: {
+        sampleNo: payload.sampleNo,
+        id: { [Op.ne]: sample.id },
+      },
+    });
+    if (duplicated) {
+      return res.send({ code: -1, message: '样本编号已存在' });
+    }
+
+    await sample.update(payload);
+    res.send({ code: 0, data: formatSample(sample) });
+  } catch (err) {
+    console.error('更新样本失败:', err);
     res.send({ code: -1, message: err.message });
   }
 });
