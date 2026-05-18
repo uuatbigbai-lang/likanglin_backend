@@ -66,6 +66,24 @@ const readPrivateKey = () => {
   return normalizePrivateKey(process.env.WECHAT_PAY_PRIVATE_KEY || process.env.WECHAT_PAY_PRIVATE_KEY_BASE64 || '');
 };
 
+const parseBooleanEnv = (value) => {
+  if (value === undefined) return null;
+  const normalized = String(value).trim().toLowerCase();
+  if (['1', 'true', 'yes', 'y', 'on'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'n', 'off'].includes(normalized)) return false;
+  return null;
+};
+
+const readPayAmountMode = () => {
+  const explicitMode = String(process.env.WECHAT_PAY_AMOUNT_MODE || '').trim().toLowerCase();
+  if (explicitMode) return explicitMode;
+
+  const useRealAmount = parseBooleanEnv(process.env.WECHAT_PAY_USE_REAL_AMOUNT);
+  if (useRealAmount !== null) return useRealAmount ? 'full' : 'test';
+
+  return '';
+};
+
 loadLocalEnv();
 
 const wxPayConfig = {
@@ -79,6 +97,7 @@ const wxPayConfig = {
   notifyUrl: process.env.WECHAT_PAY_NOTIFY_URL || '',
   mockWhenUnconfigured: process.env.WECHAT_PAY_MOCK !== 'false',
   localTestAmount: Number(process.env.WECHAT_PAY_LOCAL_TEST_AMOUNT_FEN || 1),
+  payAmountMode: readPayAmountMode(),
 };
 
 const isLocalRuntime = () => !process.env.MYSQL_ADDRESS;
@@ -87,10 +106,17 @@ const isWxPayConfigured = () =>
   !!(wxPayConfig.appId && wxPayConfig.mchId && wxPayConfig.serialNo && wxPayConfig.privateKey && wxPayConfig.notifyUrl);
 
 const getPayAmount = (amount) => {
+  const orderAmount = Number(amount);
+  if (['full', 'real', 'production'].includes(wxPayConfig.payAmountMode)) {
+    return orderAmount;
+  }
+  if (['test', 'mock', 'trial', 'cent'].includes(wxPayConfig.payAmountMode)) {
+    return wxPayConfig.localTestAmount;
+  }
   if (isLocalRuntime()) {
     return wxPayConfig.localTestAmount;
   }
-  return Number(amount);
+  return orderAmount;
 };
 
 const randomString = (length = 32) => crypto.randomBytes(length).toString('hex').slice(0, length);

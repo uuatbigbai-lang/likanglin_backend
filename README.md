@@ -130,6 +130,8 @@ curl -X POST -H 'content-type: application/json' -d '{"action": "inc"}' https://
 - `WECHAT_PAY_NOTIFY_URL`：支付通知公网地址，例如 `https://<云托管域名>/api/pay/wechat/notify`
 - `WECHAT_PAY_MOCK`：可选。默认为模拟成功；设置为 `false` 后，支付参数缺失会直接报错
 - `WECHAT_PAY_LOCAL_TEST_AMOUNT_FEN`：可选。本地开发默认支付金额为 `1` 分，即 0.01 元；需要调整时可改这个值
+- `WECHAT_PAY_AMOUNT_MODE`：可选。支付金额模式，`full`/`real` 表示按订单全额支付，`test`/`mock` 表示按测试金额支付。未配置时保持默认：本地 0.01，云托管按订单全额
+- `WECHAT_PAY_USE_REAL_AMOUNT`：可选。布尔开关，未配置 `WECHAT_PAY_AMOUNT_MODE` 时生效；`true` 表示全额，`false` 表示测试金额
 
 小程序端在结算页提交订单后，如果后端返回 `payInfo` 会调用 `wx.requestPayment`；未配置微信支付参数时仍保持本地开发的模拟支付成功跳转。本地没有 `MYSQL_ADDRESS` 时，后端向微信支付创建预支付单的金额固定为 0.01 元，订单原始总价仍按商品价格记录。
 
