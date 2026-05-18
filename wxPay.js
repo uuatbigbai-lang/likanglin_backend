@@ -31,12 +31,39 @@ const resolvePrivateKeyPath = (privateKeyPath) => {
   return path.isAbsolute(privateKeyPath) ? privateKeyPath : path.resolve(__dirname, privateKeyPath);
 };
 
+const wrapPemBody = (body) => body.replace(/\s+/g, '').replace(/(.{64})/g, '$1\n').trim();
+
+const normalizePrivateKey = (value) => {
+  const privateKey = String(value || '').trim();
+  if (!privateKey) return '';
+
+  const normalized = privateKey.replace(/\\n/g, '\n').replace(/\r\n/g, '\n');
+  const pemMatch = normalized.match(
+    /-----BEGIN (?:RSA )?PRIVATE KEY-----([\s\S]*?)-----END (?:RSA )?PRIVATE KEY-----/,
+  );
+  if (pemMatch) {
+    const beginLabel = normalized.includes('-----BEGIN RSA PRIVATE KEY-----') ? 'RSA PRIVATE KEY' : 'PRIVATE KEY';
+    return `-----BEGIN ${beginLabel}-----\n${wrapPemBody(pemMatch[1])}\n-----END ${beginLabel}-----\n`;
+  }
+
+  try {
+    const decoded = Buffer.from(privateKey, 'base64').toString('utf8').trim();
+    if (decoded && decoded !== privateKey && decoded.includes('PRIVATE KEY')) {
+      return normalizePrivateKey(decoded);
+    }
+  } catch (err) {
+    // Ignore invalid base64 and let crypto report the final key parsing error.
+  }
+
+  return normalized;
+};
+
 const readPrivateKey = () => {
   const privateKeyPath = resolvePrivateKeyPath(process.env.WECHAT_PAY_PRIVATE_KEY_PATH || '');
   if (privateKeyPath) {
-    return fs.readFileSync(privateKeyPath, 'utf8');
+    return normalizePrivateKey(fs.readFileSync(privateKeyPath, 'utf8'));
   }
-  return (process.env.WECHAT_PAY_PRIVATE_KEY || '').replace(/\\n/g, '\n');
+  return normalizePrivateKey(process.env.WECHAT_PAY_PRIVATE_KEY || process.env.WECHAT_PAY_PRIVATE_KEY_BASE64 || '');
 };
 
 loadLocalEnv();
@@ -70,6 +97,14 @@ const randomString = (length = 32) => crypto.randomBytes(length).toString('hex')
 
 const rsaSign = (message) =>
   crypto.createSign('RSA-SHA256').update(message).end().sign(wxPayConfig.privateKey, 'base64');
+
+if (wxPayConfig.privateKey) {
+  try {
+    crypto.createPrivateKey(wxPayConfig.privateKey);
+  } catch (err) {
+    console.error('微信支付商户私钥格式错误，请检查 WECHAT_PAY_PRIVATE_KEY 或 WECHAT_PAY_PRIVATE_KEY_PATH:', err.message);
+  }
+}
 
 const requestWechatPay = (method, requestPath, body) => {
   const bodyText = body ? JSON.stringify(body) : '';

@@ -125,7 +125,7 @@ curl -X POST -H 'content-type: application/json' -d '{"action": "inc"}' https://
 - `WECHAT_PAY_MCH_ID`：微信支付商户号
 - `WECHAT_PAY_SERIAL_NO`：商户 API 证书序列号
 - `WECHAT_PAY_PRIVATE_KEY_PATH`：商户 API 私钥 `.pem` 文件路径。相对路径会以 `backend` 目录为基准解析，例如 `certs/apiclient_key.pem`
-- `WECHAT_PAY_PRIVATE_KEY`：可选兜底。直接配置商户 API 私钥内容，换行可写成 `\n`
+- `WECHAT_PAY_PRIVATE_KEY`：可选兜底。直接配置商户 API 私钥内容，支持正常 PEM、`\n` 转义 PEM、没有换行的单行 PEM，或 base64 编码后的 PEM
 - `WECHAT_PAY_API_V3_KEY`：APIv3 密钥，用于解密支付通知
 - `WECHAT_PAY_NOTIFY_URL`：支付通知公网地址，例如 `https://<云托管域名>/api/pay/wechat/notify`
 - `WECHAT_PAY_MOCK`：可选。默认为模拟成功；设置为 `false` 后，支付参数缺失会直接报错
