@@ -30,6 +30,39 @@ const Counter = sequelize.define("Counter", {
   },
 });
 
+// 用户数据模型
+const User = sequelize.define("User", {
+  openid: {
+    type: DataTypes.STRING(128),
+    allowNull: false,
+    unique: true,
+    comment: "微信用户openid",
+  },
+  nickName: {
+    type: DataTypes.STRING(80),
+    allowNull: false,
+    comment: "用户昵称",
+  },
+  avatarUrl: {
+    type: DataTypes.STRING(500),
+    allowNull: true,
+    defaultValue: "",
+    comment: "用户头像",
+  },
+  phoneNumber: {
+    type: DataTypes.STRING(30),
+    allowNull: true,
+    defaultValue: "",
+    comment: "手机号",
+  },
+  gender: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+    defaultValue: 0,
+    comment: "性别",
+  },
+});
+
 // 商品数据模型
 const Product = sequelize.define("Product", {
   spuId: {
@@ -100,6 +133,11 @@ const Product = sequelize.define("Product", {
     allowNull: true,
     defaultValue: false,
     comment: "是否使用独立SKU图片",
+  },
+  pictureSpuId: {
+    type: DataTypes.STRING(64),
+    allowNull: true,
+    comment: "复用图片资源的SPU编号，不填则使用自身spuId",
   },
   minSalePrice: {
     type: DataTypes.INTEGER,
@@ -396,23 +434,94 @@ const Sample = sequelize.define("Sample", {
   },
 });
 
+// 首页可替换视觉资产：logo、功能 icon 等
+const HomeAsset = sequelize.define("HomeAsset", {
+  assetKey: {
+    type: DataTypes.STRING(64),
+    allowNull: false,
+    unique: true,
+    comment: "资源唯一标识，如 logo/philosophyNatural",
+  },
+  label: {
+    type: DataTypes.STRING(100),
+    defaultValue: "",
+    comment: "后台展示名称",
+  },
+  url: {
+    type: DataTypes.STRING(1000),
+    defaultValue: "",
+    comment: "资源文件名/相对路径，后端会拼成 cloud://.../homeAsset/...；也兼容完整 https/cloud:// 地址",
+  },
+  mimeType: {
+    type: DataTypes.STRING(80),
+    defaultValue: "",
+    comment: "旧字段：数据库图片 MIME 类型，已不推荐使用",
+  },
+  dataBase64: {
+    type: DataTypes.TEXT("long"),
+    allowNull: true,
+    comment: "旧字段：图片 base64 内容，已不推荐使用",
+  },
+});
+
+// 首页轮播 Banner：由数据库独立配置
+const HomeBanner = sequelize.define("HomeBanner", {
+  title: {
+    type: DataTypes.STRING(120),
+    defaultValue: "",
+    comment: "Banner 标题，便于后台识别",
+  },
+  imageUrl: {
+    type: DataTypes.STRING(1000),
+    allowNull: false,
+    comment: "Banner 图片文件名/相对路径，后端会拼成 cloud://.../homeBanner/...；也兼容完整 https/cloud:// 地址",
+  },
+  linkType: {
+    type: DataTypes.STRING(32),
+    defaultValue: "none",
+    comment: "跳转类型：none/product/page/url",
+  },
+  linkValue: {
+    type: DataTypes.STRING(500),
+    defaultValue: "",
+    comment: "跳转目标：spuId、小程序页面路径或外部链接",
+  },
+  sort: {
+    type: DataTypes.INTEGER,
+    defaultValue: 0,
+    comment: "排序权重，越大越靠前",
+  },
+  status: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    defaultValue: 1,
+    comment: "状态：1启用 0禁用",
+  },
+});
+
 // 数据库初始化方法
 async function init() {
   await Counter.sync({ alter: true });
+  await User.sync({ alter: true });
   await Product.sync({ alter: true });
   await Address.sync({ alter: true });
   await CartItem.sync({ alter: true });
   await Order.sync({ alter: true });
   await Sample.sync({ alter: true });
+  await HomeAsset.sync({ alter: true });
+  await HomeBanner.sync({ alter: true });
 }
 
 // 导出初始化方法和模型
 module.exports = {
   init,
   Counter,
+  User,
   Product,
   Address,
   CartItem,
   Order,
   Sample,
+  HomeAsset,
+  HomeBanner,
 };

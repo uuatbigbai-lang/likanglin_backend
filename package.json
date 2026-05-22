@@ -5,7 +5,9 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "dev": "nodemon index.js"
+    "dev": "nodemon index.js",
+    "upload:home-assets": "node home-assets/upload-home-assets.js",
+    "upload:home-assets:local": "node home-assets/upload-home-assets.js --base http://127.0.0.1:3000"
   },
   "author": "",
   "license": "Apache-2.0",

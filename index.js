@@ -3,8 +3,8 @@ const express = require('express');
 const cors = require('cors');
 const morgan = require('morgan');
 const { Op } = require('sequelize');
-const { init: initDB, Counter, Product, Address, CartItem, Order, Sample } = require('./db');
-const { withCloudProductPictures } = require('./productPictures');
+const { init: initDB, Counter, User, Product, Address, CartItem, Order, Sample, HomeAsset, HomeBanner } = require('./db');
+const { withCloudHomeAssetPicture, withCloudHomeBannerPicture, withCloudProductPictures } = require('./productPictures');
 const {
   wxPayConfig,
   isWxPayConfigured,
@@ -14,6 +14,92 @@ const {
 } = require('./wxPay');
 
 const logger = morgan('tiny');
+
+const HOME_ASSET_DEFINITIONS = [
+  { key: 'logo', label: '首页品牌 Logo' },
+  { key: 'icon1', label: '肠道检测' },
+  { key: 'icon2', label: '报告截图' },
+  { key: 'icon3', label: '益生菌方案' },
+  { key: 'icon4', label: '科普知识' },
+  { key: 'nutritionPlaceholder', label: '首页占位图' },
+];
+
+const HOME_ASSET_KEYS = new Set(HOME_ASSET_DEFINITIONS.map((item) => item.key));
+const ASSET_KEY_PATTERN = /^[a-zA-Z][a-zA-Z0-9_-]{1,63}$/;
+
+const formatHomeAsset = (asset) => {
+  const data = withCloudHomeAssetPicture(asset);
+  return {
+    key: data.assetKey,
+    label: data.label || '',
+    url: data.url || '',
+    updatedAt: data.updatedAt,
+  };
+};
+
+const formatHomeBanner = (banner) => {
+  const data = withCloudHomeBannerPicture(banner);
+  return {
+    id: data.id,
+    title: data.title || '',
+    imageUrl: data.imageUrl || '',
+    linkType: data.linkType || 'none',
+    linkValue: data.linkValue || '',
+    sort: data.sort || 0,
+    status: data.status,
+    updatedAt: data.updatedAt,
+  };
+};
+
+const validateAssetKey = (assetKey) => ASSET_KEY_PATTERN.test(assetKey) && (HOME_ASSET_KEYS.has(assetKey) || assetKey.startsWith('custom_'));
+
+const DEFAULT_USER_AVATAR =
+  'https://tdesign.gtimg.com/miniprogram/template/retail/usercenter/icon-user-center-avatar@2x.png';
+
+const buildDefaultNickName = (openid = '') => {
+  const suffix = String(openid || 'guest')
+    .replace(/[^a-zA-Z0-9]/g, '')
+    .slice(-4)
+    .toUpperCase() || 'GUEST';
+  return `小林${suffix}`;
+};
+
+const formatUserInfo = (user) => {
+  const data = user && typeof user.toJSON === 'function' ? user.toJSON() : { ...user };
+  return {
+    openid: data.openid,
+    nickName: data.nickName,
+    avatarUrl: data.avatarUrl || DEFAULT_USER_AVATAR,
+    phoneNumber: data.phoneNumber || '',
+    gender: data.gender || 0,
+  };
+};
+
+const saveHomeAsset = async (req, res) => {
+  try {
+    const assetKey = String(req.params.key || '').trim();
+    if (!validateAssetKey(assetKey)) {
+      return res.send({ code: -1, message: '无效的资源 key' });
+    }
+
+    const { label, url, fileName, imageUrl } = req.body || {};
+    const assetFile = String(fileName || imageUrl || url || '').trim();
+    const preset = HOME_ASSET_DEFINITIONS.find((item) => item.key === assetKey);
+    if (!assetFile) {
+      return res.send({ code: -1, message: '请提供 url、imageUrl 或 fileName' });
+    }
+
+    await HomeAsset.upsert({
+      assetKey,
+      label: String(label || preset?.label || assetKey).trim(),
+      url: assetFile,
+    });
+    const saved = await HomeAsset.findOne({ where: { assetKey } });
+    res.send({ code: 0, data: formatHomeAsset(saved) });
+  } catch (err) {
+    res.send({ code: -1, message: err.message });
+  }
+};
 
 const formatAddress = (addr) => {
   if (!addr) return null;
@@ -236,11 +322,146 @@ app.get('/api/wx_openid', async (req, res) => {
   }
 });
 
+// 自动登录：根据 openid 获取或创建用户，并为新用户分配默认昵称
+app.post('/api/user/auto-login', async (req, res) => {
+  try {
+    const headerOpenid = req.headers['x-wx-openid'] || '';
+    const { authorizationCode } = req.body || {};
+    const codeOpenid = await getOpenidByCode(authorizationCode);
+    const openid = headerOpenid || codeOpenid || 'local_dev_user';
+
+    const [user, created] = await User.findOrCreate({
+      where: { openid },
+      defaults: {
+        openid,
+        nickName: buildDefaultNickName(openid),
+        avatarUrl: DEFAULT_USER_AVATAR,
+        phoneNumber: '',
+        gender: 0,
+      },
+    });
+
+    res.send({
+      code: 0,
+      data: {
+        userInfo: formatUserInfo(user),
+        isNewUser: created,
+      },
+    });
+  } catch (err) {
+    console.error('自动登录失败:', err);
+    res.send({ code: -1, message: err.message });
+  }
+});
+
+// ============ 首页可替换资产接口 ============
+
+// 获取首页 logo/icon 配置。数据库只需存文件名/相对路径，后端会拼成 cloud://.../homeAsset/...。
+app.get('/api/home/assets', async (req, res) => {
+  try {
+    const rows = await HomeAsset.findAll({ order: [['assetKey', 'ASC']] });
+    const assets = rows.map(formatHomeAsset);
+    const assetMap = assets.reduce((result, item) => {
+      result[item.key] = item;
+      return result;
+    }, {});
+
+    res.send({
+      code: 0,
+      data: {
+        definitions: HOME_ASSET_DEFINITIONS,
+        assets,
+        assetMap,
+      },
+    });
+  } catch (err) {
+    res.send({ code: -1, message: err.message });
+  }
+});
+
+// 初始化首页 logo/icon 资产种子数据（强制重置）
+app.post('/api/home/assets/seed', async (req, res) => {
+  try {
+    await HomeAsset.destroy({ truncate: true });
+
+    const seedData = [
+      { assetKey: 'logo', label: '首页品牌 Logo', url: 'logo.png' },
+      { assetKey: 'icon1', label: '肠道检测', url: 'icons/icon1.png' },
+      { assetKey: 'icon2', label: '报告截图', url: 'icons/icon2.png' },
+      { assetKey: 'icon3', label: '益生菌方案', url: 'icons/icon3.png' },
+      { assetKey: 'icon4', label: '科普知识', url: 'icons/icon4.png' },
+      { assetKey: 'nutritionPlaceholder', label: '首页占位图', url: 'icons/nutrition-placeholder.png' },
+    ];
+
+    await HomeAsset.bulkCreate(seedData);
+    res.send({ code: 0, message: '首页资产种子数据初始化成功', data: { count: seedData.length } });
+  } catch (err) {
+    res.send({ code: -1, message: err.message });
+  }
+});
+
+// 配置或替换单个首页资产。支持 { fileName }、{ imageUrl } 或 { url }。
+app.post('/api/home/assets/:key', saveHomeAsset);
+
+// 兼容旧路径：POST /api/home/assets/logo/upload
+app.post('/api/home/assets/:key/upload', saveHomeAsset);
+
+// 获取首页轮播 Banner。数据来自独立 HomeBanner 表，便于数据库直接配置。
+app.get('/api/home/banners', async (req, res) => {
+  try {
+    const rows = await HomeBanner.findAll({
+      where: { status: 1 },
+      order: [
+        ['sort', 'DESC'],
+        ['updatedAt', 'DESC'],
+      ],
+    });
+    res.send({ code: 0, data: rows.map(formatHomeBanner) });
+  } catch (err) {
+    res.send({ code: -1, message: err.message });
+  }
+});
+
+// 初始化首页 Banner 种子数据（强制重置）
+app.post('/api/home/banners/seed', async (req, res) => {
+  try {
+    await HomeBanner.destroy({ truncate: true });
+
+    const seedData = [
+      {
+        title: '首页益生菌 Banner',
+        imageUrl: 'banner-test.png',
+        linkType: 'product',
+        linkValue: 'spu_probiotic_01',
+        sort: 100,
+        status: 1,
+      }
+    ];
+
+    await HomeBanner.bulkCreate(seedData);
+    res.send({ code: 0, message: '首页 Banner 种子数据初始化成功', data: { count: seedData.length } });
+  } catch (err) {
+    res.send({ code: -1, message: err.message });
+  }
+});
+
 // 获取商品列表
 app.get('/api/products', async (req, res) => {
   try {
+    const keyword = String(req.query.keyword || req.query.keywords || '').trim();
+    const where = { status: 1 };
+
+    if (keyword) {
+      where[Op.or] = [
+        { title: { [Op.like]: `%${keyword}%` } },
+        { brief: { [Op.like]: `%${keyword}%` } },
+        { badge: { [Op.like]: `%${keyword}%` } },
+        { spuId: { [Op.like]: `%${keyword}%` } },
+      ];
+    }
+
     const products = await Product.findAll({
-      where: { status: 1 },
+      where,
       order: [
         ['sort', 'DESC'],
         ['createdAt', 'DESC'],
@@ -257,6 +478,7 @@ app.get('/api/products', async (req, res) => {
         'bannerLength',
         'detailPicLength',
         'usePicture',
+        'pictureSpuId',
       ],
     });
     const data = products.map(withCloudProductPictures);
@@ -287,97 +509,162 @@ app.post('/api/products/seed', async (req, res) => {
     // 清空旧数据并重新插入
     await Product.destroy({ truncate: true });
 
+    const baseProduct = {
+      spuId: 'spu_probiotic_01',
+      title: '清畅益生菌粉（成人款）',
+      brief: '含300亿活性乳酸菌，呵护肠道微生态平衡，每天一袋，轻松享受清爽好肠道。',
+      price: 168,
+      originalPrice: 238,
+      badge: '人气爆款',
+      useThumb: true,
+      bannerLength: 2,
+      detailPicLength: 2,
+      sort: 30,
+      minSalePrice: 16800,
+      maxSalePrice: 19800,
+      maxLinePrice: 23800,
+      soldNum: 1260,
+      spuStockQuantity: 500,
+      isPutOnSale: 1,
+      specList: [
+        {
+          specId: 'spec_01_flavor',
+          title: '口味',
+          specValueList: [
+            { specValueId: 'sv_01_original', specValue: '原味', image: '' },
+            { specValueId: 'sv_01_berry', specValue: '混合莓果味', image: '' },
+          ],
+        },
+        {
+          specId: 'spec_01_count',
+          title: '规格',
+          specValueList: [
+            { specValueId: 'sv_01_30', specValue: '30袋/盒', image: '' },
+            { specValueId: 'sv_01_60', specValue: '60袋/盒（家庭装）', image: '' },
+          ],
+        },
+      ],
+      skuList: [
+        {
+          skuId: 'sku_01_01',
+          usePicture: true,
+          specInfo: [
+            { specId: 'spec_01_flavor', specValueId: 'sv_01_original' },
+            { specId: 'spec_01_count', specValueId: 'sv_01_30' },
+          ],
+          priceInfo: [
+            { priceType: 1, price: '16800' },
+            { priceType: 2, price: '23800' },
+          ],
+          stockInfo: { stockQuantity: 150, safeStockQuantity: 0, soldQuantity: 0 },
+        },
+        {
+          skuId: 'sku_01_02',
+          usePicture: false,
+          specInfo: [
+            { specId: 'spec_01_flavor', specValueId: 'sv_01_original' },
+            { specId: 'spec_01_count', specValueId: 'sv_01_60' },
+          ],
+          priceInfo: [
+            { priceType: 1, price: '19800' },
+            { priceType: 2, price: '23800' },
+          ],
+          stockInfo: { stockQuantity: 120, safeStockQuantity: 0, soldQuantity: 0 },
+        },
+        {
+          skuId: 'sku_01_03',
+          specInfo: [
+            { specId: 'spec_01_flavor', specValueId: 'sv_01_berry' },
+            { specId: 'spec_01_count', specValueId: 'sv_01_30' },
+          ],
+          priceInfo: [
+            { priceType: 1, price: '17800' },
+            { priceType: 2, price: '23800' },
+          ],
+          stockInfo: { stockQuantity: 130, safeStockQuantity: 0, soldQuantity: 0 },
+        },
+        {
+          skuId: 'sku_01_04',
+          specInfo: [
+            { specId: 'spec_01_flavor', specValueId: 'sv_01_berry' },
+            { specId: 'spec_01_count', specValueId: 'sv_01_60' },
+          ],
+          priceInfo: [
+            { priceType: 1, price: '19800' },
+            { priceType: 2, price: '23800' },
+          ],
+          stockInfo: { stockQuantity: 100, safeStockQuantity: 0, soldQuantity: 0 },
+        },
+      ],
+    };
+
+    const cloneProduct = (overrides) => {
+      const product = {
+        ...JSON.parse(JSON.stringify(baseProduct)),
+        pictureSpuId: 'spu_probiotic_01',
+        ...overrides,
+      };
+      const skuPrices = overrides.skuPrices || [
+        product.minSalePrice,
+        product.maxSalePrice,
+        product.minSalePrice,
+        product.maxSalePrice,
+      ];
+      product.skuList = product.skuList.map((sku, index) => ({
+        ...sku,
+        priceInfo: [
+          { priceType: 1, price: String(skuPrices[index] || product.minSalePrice) },
+          { priceType: 2, price: String(product.maxLinePrice) },
+        ],
+      }));
+      delete product.skuPrices;
+      return product;
+    };
+
     const seedData = [
-      {
-        spuId: 'spu_probiotic_01',
-        title: '清畅益生菌粉（成人款）',
-        brief: '含300亿活性乳酸菌，呵护肠道微生态平衡，每天一袋，轻松享受清爽好肠道。',
-        price: 168,
-        originalPrice: 238,
-        badge: '人气爆款',
-        useThumb: true,
-        bannerLength: 2,
-        detailPicLength: 2,
-        sort: 30,
-        minSalePrice: 16800,
-        maxSalePrice: 19800,
-        maxLinePrice: 23800,
-        soldNum: 1260,
-        spuStockQuantity: 500,
-        isPutOnSale: 1,
-        specList: [
-          {
-            specId: 'spec_01_flavor',
-            title: '口味',
-            specValueList: [
-              { specValueId: 'sv_01_original', specValue: '原味', image: '' },
-              { specValueId: 'sv_01_berry', specValue: '混合莓果味', image: '' },
-            ],
-          },
-          {
-            specId: 'spec_01_count',
-            title: '规格',
-            specValueList: [
-              { specValueId: 'sv_01_30', specValue: '30袋/盒', image: '' },
-              { specValueId: 'sv_01_60', specValue: '60袋/盒（家庭装）', image: '' },
-            ],
-          },
-        ],
-        skuList: [
-          {
-            skuId: 'sku_01_01',
-            usePicture: true,
-            specInfo: [
-              { specId: 'spec_01_flavor', specValueId: 'sv_01_original' },
-              { specId: 'spec_01_count', specValueId: 'sv_01_30' },
-            ],
-            priceInfo: [
-              { priceType: 1, price: '16800' },
-              { priceType: 2, price: '23800' },
-            ],
-            stockInfo: { stockQuantity: 150, safeStockQuantity: 0, soldQuantity: 0 },
-          },
-          {
-            skuId: 'sku_01_02',
-            usePicture: false,
-            specInfo: [
-              { specId: 'spec_01_flavor', specValueId: 'sv_01_original' },
-              { specId: 'spec_01_count', specValueId: 'sv_01_60' },
-            ],
-            priceInfo: [
-              { priceType: 1, price: '19800' },
-              { priceType: 2, price: '23800' },
-            ],
-            stockInfo: { stockQuantity: 120, safeStockQuantity: 0, soldQuantity: 0 },
-          },
-          {
-            skuId: 'sku_01_03',
-
-            specInfo: [
-              { specId: 'spec_01_flavor', specValueId: 'sv_01_berry' },
-              { specId: 'spec_01_count', specValueId: 'sv_01_30' },
-            ],
-            priceInfo: [
-              { priceType: 1, price: '17800' },
-              { priceType: 2, price: '23800' },
-            ],
-            stockInfo: { stockQuantity: 130, safeStockQuantity: 0, soldQuantity: 0 },
-          },
-          {
-            skuId: 'sku_01_04',
-
-            specInfo: [
-              { specId: 'spec_01_flavor', specValueId: 'sv_01_berry' },
-              { specId: 'spec_01_count', specValueId: 'sv_01_60' },
-            ],
-            priceInfo: [
-              { priceType: 1, price: '19800' },
-              { priceType: 2, price: '23800' },
-            ],
-            stockInfo: { stockQuantity: 100, safeStockQuantity: 0, soldQuantity: 0 },
-          },
-        ],
-      },
+      baseProduct,
+      cloneProduct({
+        spuId: 'spu_probiotic_02',
+        title: '清畅益生菌粉（儿童款）',
+        brief: '温和配方搭配多种益生元，适合儿童日常肠道养护，帮助维持肠道菌群平衡。',
+        price: 138,
+        originalPrice: 198,
+        badge: '儿童优选',
+        sort: 26,
+        minSalePrice: 13800,
+        maxSalePrice: 16800,
+        maxLinePrice: 19800,
+        soldNum: 860,
+        spuStockQuantity: 420,
+      }),
+      cloneProduct({
+        spuId: 'spu_testkit_01',
+        title: '肠道菌群检测盒（基础版）',
+        brief: '居家采样，专业检测肠道菌群状态，生成可读报告，为后续益生菌方案提供参考。',
+        price: 299,
+        originalPrice: 399,
+        badge: '检测盒',
+        sort: 24,
+        minSalePrice: 29900,
+        maxSalePrice: 29900,
+        maxLinePrice: 39900,
+        soldNum: 520,
+        spuStockQuantity: 300,
+      }),
+      cloneProduct({
+        spuId: 'spu_probiotic_03',
+        title: '舒敏益生菌粉（家庭装）',
+        brief: '家庭分享装，覆盖日常营养补充和换季肠道管理场景，适合多人持续使用。',
+        price: 218,
+        originalPrice: 298,
+        badge: '家庭装',
+        sort: 22,
+        minSalePrice: 21800,
+        maxSalePrice: 25800,
+        maxLinePrice: 29800,
+        soldNum: 680,
+        spuStockQuantity: 360,
+      }),
     ];
 
     const cloudSeedData = seedData.map(withCloudProductPictures);
@@ -957,6 +1244,84 @@ app.post('/api/order/create', async (req, res) => {
   }
 });
 
+// 已有待付款订单继续支付
+app.post('/api/order/pay', async (req, res) => {
+  try {
+    const headerOpenid = req.headers['x-wx-openid'] || '';
+    const { orderId, orderNo, authorizationCode } = req.body || {};
+    const conditions = [];
+
+    if (orderNo) {
+      conditions.push({ orderNo });
+    }
+    if (orderId && /^\d+$/.test(String(orderId))) {
+      conditions.push({ id: Number(orderId) });
+    }
+    if (conditions.length === 0) {
+      return res.send({ code: -1, message: '缺少订单标识' });
+    }
+
+    const order = await Order.findOne({ where: { [Op.or]: conditions } });
+    if (!order) {
+      return res.send({ code: -1, message: '订单不存在' });
+    }
+    if (Number(order.orderStatus) !== 5) {
+      return res.send({ code: -1, message: '当前订单状态不可支付' });
+    }
+
+    const codeOpenid = await getOpenidByCode(authorizationCode);
+    const openid = headerOpenid || codeOpenid || order.openid || 'local_dev_user';
+
+    if (openid && openid !== 'local_dev_user' && openid !== order.openid) {
+      await order.update({ openid });
+    }
+
+    let payData = null;
+    if (isWxPayConfigured() && openid !== 'local_dev_user') {
+      const goodsList = Array.isArray(order.goodsList) ? order.goodsList : [];
+      const firstGoodsName = goodsList[0] && (goodsList[0].goodsName || goodsList[0].title);
+      const orderAmount = Number(order.totalAmount || order.paymentAmount || 0);
+      if (orderAmount <= 0) {
+        return res.send({ code: -1, message: '订单金额异常' });
+      }
+
+      const { payAmount, prepayId, payInfo } = await createWechatPrepay({
+        orderNo: order.orderNo,
+        openid,
+        amount: orderAmount,
+        description: firstGoodsName || `订单${order.orderNo}`,
+      });
+      await order.update({ prepayId, paymentAmount: String(payAmount) });
+      payData = {
+        channel: 'wechat',
+        tradeNo: order.orderNo,
+        orderNo: order.orderNo,
+        orderId: order.id,
+        paymentAmount: String(payAmount),
+        payInfo,
+      };
+    } else if (!wxPayConfig.mockWhenUnconfigured) {
+      return res.send({ code: -1, message: '微信支付参数未配置，无法发起支付' });
+    }
+
+    res.send({
+      code: 0,
+      data: {
+        orderId: order.id,
+        orderNo: order.orderNo,
+        totalAmount: order.totalAmount,
+        paymentAmount: order.paymentAmount,
+        orderStatus: order.orderStatus,
+        goodsList: order.goodsList,
+        ...payData,
+      },
+    });
+  } catch (err) {
+    console.error('继续支付失败:', err);
+    res.send({ code: -1, message: err.message });
+  }
+});
+
 // 小程序端支付成功后主动同步订单状态。
 // 微信支付通知仍是最终可信来源；这个接口用于本地模拟支付和避免通知异步导致详情页短暂显示待付款。
 app.post('/api/order/paid', async (req, res) => {
@@ -1027,25 +1392,39 @@ app.post('/api/pay/wechat/notify', async (req, res) => {
 
 const port = process.env.PORT || 3000;
 
+const postLocalSeed = (pathName, label) => {
+  const http = require('http');
+  http
+    .request({ hostname: '127.0.0.1', port, path: pathName, method: 'POST' }, (res) => {
+      let body = '';
+      res.on('data', (chunk) => (body += chunk));
+      res.on('end', () => console.log(`🌱 ${label}:`, body));
+    })
+    .on('error', (err) => console.error(`🌱 ${label}失败:`, err.message))
+    .end();
+};
+
 async function bootstrap() {
   await initDB();
 
   // 本地开发模式下自动插入种子数据（SQLite 内存库每次重启都是空的）
   if (!process.env.MYSQL_ADDRESS) {
-    const count = await Product.count();
-    if (count === 0) {
+    const productCount = await Product.count();
+    const assetCount = await HomeAsset.count();
+    const bannerCount = await HomeBanner.count();
+    if (productCount === 0 || assetCount === 0 || bannerCount === 0) {
       console.log('🌱 本地模式：自动插入种子数据...');
-      // 触发 seed 逻辑
-      const http = require('http');
       app.listen(port, () => {
         console.log('启动成功', port);
-        http
-          .request({ hostname: '127.0.0.1', port, path: '/api/products/seed', method: 'POST' }, (res) => {
-            let body = '';
-            res.on('data', (chunk) => (body += chunk));
-            res.on('end', () => console.log('🌱 种子数据:', body));
-          })
-          .end();
+        if (productCount === 0) {
+          postLocalSeed('/api/products/seed', '商品种子数据');
+        }
+        if (assetCount === 0) {
+          postLocalSeed('/api/home/assets/seed', '首页资产种子数据');
+        }
+        if (bannerCount === 0) {
+          postLocalSeed('/api/home/banners/seed', '首页 Banner 种子数据');
+        }
       });
       return;
     }
