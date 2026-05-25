@@ -193,11 +193,12 @@ const buildPaymentParams = (prepayId) => {
 
 const createWechatPrepay = async ({ orderNo, openid, amount, description }) => {
   const payAmount = getPayAmount(amount);
+  const outTradeNo = String(orderNo || '');
   const prepay = await requestWechatPay('POST', '/v3/pay/transactions/jsapi', {
     appid: wxPayConfig.appId,
     mchid: wxPayConfig.mchId,
     description: String(description || '商品订单').slice(0, 127),
-    out_trade_no: orderNo,
+    out_trade_no: outTradeNo,
     notify_url: wxPayConfig.notifyUrl,
     amount: {
       total: payAmount,
@@ -208,6 +209,8 @@ const createWechatPrepay = async ({ orderNo, openid, amount, description }) => {
 
   return {
     payAmount,
+    outTradeNo,
+    out_trade_no: outTradeNo,
     prepayId: prepay.prepay_id,
     payInfo: buildPaymentParams(prepay.prepay_id),
   };

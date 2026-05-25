@@ -347,10 +347,125 @@ const Order = sequelize.define("Order", {
     allowNull: true,
     comment: "微信支付订单号",
   },
+  waybillToken: {
+    type: DataTypes.STRING(256),
+    allowNull: true,
+    comment: "微信物流查询插件 waybill_token",
+  },
+  logisticsNo: {
+    type: DataTypes.STRING(128),
+    allowNull: true,
+    comment: "物流运单号",
+  },
+  logisticsCompanyCode: {
+    type: DataTypes.STRING(64),
+    allowNull: true,
+    comment: "物流公司编码或运力id",
+  },
+  logisticsCompanyName: {
+    type: DataTypes.STRING(80),
+    allowNull: true,
+    comment: "物流公司名称",
+  },
+  sampleStatus: {
+    type: DataTypes.STRING(32),
+    allowNull: true,
+    defaultValue: "",
+    comment: "检测样本状态 returning/testing/completed",
+  },
   paidAt: {
     type: DataTypes.DATE,
     allowNull: true,
     comment: "支付成功时间",
+  },
+});
+
+const AfterSale = sequelize.define("AfterSale", {
+  rightsNo: {
+    type: DataTypes.STRING(64),
+    allowNull: false,
+    unique: true,
+    comment: "售后服务单号",
+  },
+  returnId: {
+    type: DataTypes.STRING(128),
+    allowNull: true,
+    comment: "预留退货外部平台标识",
+  },
+  orderNo: {
+    type: DataTypes.STRING(64),
+    allowNull: false,
+    comment: "订单编号",
+  },
+  openid: {
+    type: DataTypes.STRING(128),
+    allowNull: true,
+    comment: "用户openid",
+  },
+  rightsType: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    defaultValue: 20,
+    comment: "售后类型 20仅退款 10退货退款",
+  },
+  rightsStatus: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    defaultValue: 10,
+    comment: "商家侧售后状态",
+  },
+  userRightsStatus: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    defaultValue: 100,
+    comment: "用户侧售后状态",
+  },
+  refundRequestAmount: {
+    type: DataTypes.STRING(20),
+    allowNull: false,
+    defaultValue: "0",
+    comment: "申请退款金额（分）",
+  },
+  refundAmount: {
+    type: DataTypes.STRING(20),
+    allowNull: false,
+    defaultValue: "0",
+    comment: "实际退款金额（分）",
+  },
+  rightsReasonDesc: {
+    type: DataTypes.STRING(200),
+    defaultValue: "",
+    comment: "售后原因",
+  },
+  rightsReasonType: {
+    type: DataTypes.STRING(64),
+    defaultValue: "",
+    comment: "售后原因类型",
+  },
+  refundMemo: {
+    type: DataTypes.STRING(500),
+    defaultValue: "",
+    comment: "退款说明",
+  },
+  rightsImageUrls: {
+    type: DataTypes.JSON,
+    defaultValue: [],
+    comment: "售后凭证图片",
+  },
+  rightsItems: {
+    type: DataTypes.JSON,
+    defaultValue: [],
+    comment: "售后商品快照",
+  },
+  logistics: {
+    type: DataTypes.JSON,
+    defaultValue: {},
+    comment: "用户退货物流与商家退货地址",
+  },
+  wechatReturnPayload: {
+    type: DataTypes.JSON,
+    defaultValue: null,
+    comment: "预留退货外部平台请求体",
   },
 });
 
@@ -507,6 +622,7 @@ async function init() {
   await Address.sync({ alter: true });
   await CartItem.sync({ alter: true });
   await Order.sync({ alter: true });
+  await AfterSale.sync({ alter: true });
   await Sample.sync({ alter: true });
   await HomeAsset.sync({ alter: true });
   await HomeBanner.sync({ alter: true });
@@ -521,6 +637,7 @@ module.exports = {
   Address,
   CartItem,
   Order,
+  AfterSale,
   Sample,
   HomeAsset,
   HomeBanner,

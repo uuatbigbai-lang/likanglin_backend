@@ -1,9 +1,22 @@
 const path = require('path');
+const https = require('https');
 const express = require('express');
 const cors = require('cors');
 const morgan = require('morgan');
 const { Op } = require('sequelize');
-const { init: initDB, Counter, User, Product, Address, CartItem, Order, Sample, HomeAsset, HomeBanner } = require('./db');
+const {
+  init: initDB,
+  Counter,
+  User,
+  Product,
+  Address,
+  CartItem,
+  Order,
+  AfterSale,
+  Sample,
+  HomeAsset,
+  HomeBanner,
+} = require('./db');
 const { withCloudHomeAssetPicture, withCloudHomeBannerPicture, withCloudProductPictures } = require('./productPictures');
 const {
   wxPayConfig,
@@ -130,14 +143,15 @@ const normalizeSpecs = (goods) => {
     .map((specValue) => ({ specValue }));
 };
 
-const buildLogisticsVO = (address = {}) => {
+const buildLogisticsVO = (address = {}, order = {}) => {
   const receiverAddress = address.detailAddress || address.address || '';
   return {
     logisticsType: 1,
-    logisticsNo: '',
+    logisticsNo: order.logisticsNo || '',
     logisticsStatus: null,
-    logisticsCompanyCode: '',
-    logisticsCompanyName: '',
+    logisticsCompanyCode: order.logisticsCompanyCode || '',
+    logisticsCompanyName: order.logisticsCompanyName || '',
+    waybillToken: order.waybillToken || '',
     receiverAddressId: String(address.addressId || address.id || ''),
     provinceCode: address.provinceCode || '',
     cityCode: address.cityCode || '',
@@ -167,6 +181,11 @@ const formatOrderForMiniProgram = (order) => {
   const goodsList = Array.isArray(data.goodsList) ? data.goodsList : [];
   const createTime = new Date(data.createdAt || Date.now()).getTime();
   const paySuccessTime = data.paidAt ? new Date(data.paidAt).getTime() : null;
+  const sampleStatusNameMap = {
+    returning: '回寄中',
+    testing: '样本检测中',
+    completed: '检测完成',
+  };
 
   return {
     saasId: '',
@@ -223,10 +242,12 @@ const formatOrderForMiniProgram = (order) => {
         tagText: goods.tagText || null,
         outCode: null,
         labelVOs: null,
-        buttonVOs: [],
+        buttonVOs: [40, 50].includes(Number(data.orderStatus))
+          ? [{ primary: false, type: 4, name: '申请售后' }]
+          : [],
       };
     }),
-    logisticsVO: buildLogisticsVO(data.userAddress || {}),
+    logisticsVO: buildLogisticsVO(data.userAddress || {}, data),
     paymentVO: {
       payStatus: paySuccessTime ? 1 : 0,
       amount: String(data.paymentAmount || data.totalAmount || '0'),
@@ -241,6 +262,10 @@ const formatOrderForMiniProgram = (order) => {
       payTime: paySuccessTime,
       paySuccessTime,
     },
+    waybillToken: data.waybillToken || '',
+    waybill_token: data.waybillToken || '',
+    sampleStatus: data.sampleStatus || '',
+    sampleStatusName: sampleStatusNameMap[data.sampleStatus] || data.sampleStatus || '',
     buttonVOs: getOrderButtons(data.orderStatus),
     labelVOs: null,
     invoiceVO: null,
@@ -255,6 +280,224 @@ const formatOrderForMiniProgram = (order) => {
     invoiceStatus: 3,
     invoiceDesc: '暂不开发票',
     invoiceUrl: null,
+  };
+};
+
+const RETURN_ADDRESS = {
+  name: process.env.RETURN_RECEIVER_NAME || '售后仓库',
+  mobile: process.env.RETURN_RECEIVER_MOBILE || '13800000000',
+  tel: process.env.RETURN_RECEIVER_TEL || '',
+  company: process.env.RETURN_RECEIVER_COMPANY || '官方商城',
+  post_code: process.env.RETURN_RECEIVER_POST_CODE || '000000',
+  country: process.env.RETURN_RECEIVER_COUNTRY || '中国',
+  province: process.env.RETURN_RECEIVER_PROVINCE || '广东省',
+  city: process.env.RETURN_RECEIVER_CITY || '深圳市',
+  area: process.env.RETURN_RECEIVER_AREA || '南山区',
+  address: process.env.RETURN_RECEIVER_ADDRESS || '前海路333号售后仓',
+};
+
+let wechatAccessTokenCache = {
+  token: '',
+  expiresAt: 0,
+};
+
+const requestWechatJson = ({ method = 'GET', path: urlPath, data }) =>
+  new Promise((resolve, reject) => {
+    const bodyText = data ? JSON.stringify(data) : '';
+    const req = https.request(
+      {
+        hostname: 'api.weixin.qq.com',
+        path: urlPath,
+        method,
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(bodyText),
+        },
+      },
+      (response) => {
+        let responseText = '';
+        response.on('data', (chunk) => {
+          responseText += chunk;
+        });
+        response.on('end', () => {
+          let json = {};
+          try {
+            json = responseText ? JSON.parse(responseText) : {};
+          } catch (err) {
+            return reject(new Error('微信接口返回解析失败'));
+          }
+          if (response.statusCode >= 200 && response.statusCode < 300) {
+            resolve(json);
+          } else {
+            reject(new Error(json.errmsg || `微信接口请求失败：${response.statusCode}`));
+          }
+        });
+      },
+    );
+    req.on('error', reject);
+    if (bodyText) req.write(bodyText);
+    req.end();
+  });
+
+const getWechatAccessToken = async () => {
+  if (wechatAccessTokenCache.token && Date.now() < wechatAccessTokenCache.expiresAt) {
+    return wechatAccessTokenCache.token;
+  }
+  if (!wxPayConfig.appId || !wxPayConfig.appSecret) return '';
+
+  const tokenRes = await requestWechatJson({
+    path:
+      `/cgi-bin/token?grant_type=client_credential&appid=${encodeURIComponent(wxPayConfig.appId)}` +
+      `&secret=${encodeURIComponent(wxPayConfig.appSecret)}`,
+  });
+  if (tokenRes.errcode) {
+    throw new Error(tokenRes.errmsg || `获取 access_token 失败：${tokenRes.errcode}`);
+  }
+
+  wechatAccessTokenCache = {
+    token: tokenRes.access_token || '',
+    expiresAt: Date.now() + Math.max(Number(tokenRes.expires_in || 7200) - 300, 60) * 1000,
+  };
+  return wechatAccessTokenCache.token;
+};
+
+const normalizeReturnAddress = (address = {}) => ({
+  name: address.name || '',
+  mobile: address.mobile || address.phone || address.phoneNumber || '',
+  country: address.country || '中国',
+  province: address.province || address.provinceName || '',
+  city: address.city || address.cityName || '',
+  area: address.area || address.areaName || address.districtName || '',
+  address: address.address || address.detailAddress || '',
+});
+
+const buildWechatReturnPayload = ({ afterSale, order }) => {
+  const orderData = typeof order.toJSON === 'function' ? order.toJSON() : order;
+  const goods = Array.isArray(afterSale.rightsItems) ? afterSale.rightsItems : [];
+
+  return {
+    shop_order_id: afterSale.rightsNo,
+    biz_addr: normalizeReturnAddress(RETURN_ADDRESS),
+    user_addr: normalizeReturnAddress(orderData.userAddress || {}),
+    openid: afterSale.openid || orderData.openid || '',
+    order_path: `/pages/order/after-service-detail/index?rightsNo=${afterSale.rightsNo}`,
+    goods_list: goods.map((item) => ({
+      name: item.goodsName || '退货商品',
+      url: item.goodsPictureUrl || '',
+    })),
+    order_price: Number(afterSale.refundRequestAmount || 0),
+  };
+};
+
+const createWechatReturnId = async ({ afterSale, order }) => {
+  if (!afterSale || !order) return '';
+  if (!afterSale.openid || afterSale.openid === 'local_dev_user') return '';
+
+  const accessToken = await getWechatAccessToken();
+  if (!accessToken) return '';
+
+  const result = await requestWechatJson({
+    method: 'POST',
+    path: `/cgi-bin/express/delivery/return/add?access_token=${encodeURIComponent(accessToken)}`,
+    data: buildWechatReturnPayload({ afterSale, order }),
+  });
+  if (result.errcode) {
+    throw new Error(result.errmsg || `创建微信退货 ID 失败：${result.errcode}`);
+  }
+  return result.return_id || '';
+};
+
+const SERVICE_STATUS = {
+  PENDING_VERIFY: 100,
+  VERIFIED: 110,
+  PENDING_DELIVERY: 120,
+  REFUNDED: 160,
+  CLOSED: 170,
+};
+
+const AFTER_SERVICE_STATUS = {
+  TO_AUDIT: 10,
+  THE_APPROVED: 20,
+  COMPLETE: 50,
+  CLOSED: 60,
+};
+
+const formatAfterSaleForMiniProgram = (afterSale) => {
+  const data = typeof afterSale.toJSON === 'function' ? afterSale.toJSON() : afterSale;
+  const createTime = new Date(data.createdAt || Date.now()).getTime();
+  const isReturnGoods = Number(data.rightsType) === 10;
+  const logistics = data.logistics || {};
+  const hasLogisticsNo = !!logistics.logisticsNo;
+  const userRightsStatusName =
+    Number(data.userRightsStatus) === SERVICE_STATUS.REFUNDED
+      ? '已退款'
+      : hasLogisticsNo
+        ? '买家已寄出'
+        : isReturnGoods
+          ? '待买家退货'
+          : '待商家处理';
+  const userRightsStatusDesc =
+    Number(data.userRightsStatus) === SERVICE_STATUS.REFUNDED
+      ? '退款/售后已完成'
+      : hasLogisticsNo
+        ? '退货物流已提交，商家将尽快收货处理'
+        : isReturnGoods
+          ? '商家已同意退货，请使用微信退货或填写退货运单'
+          : '商家将尽快确认您的退款申请';
+
+  return {
+    buttonVOs: isReturnGoods && !hasLogisticsNo
+      ? [{ name: '填写运单号', primary: true, type: 3 }]
+      : hasLogisticsNo
+        ? [
+            { name: '修改运单号', primary: false, type: 4 },
+            { name: '查看物流', primary: false, type: 5 },
+          ]
+        : [],
+    refundMethodList: [{ refundMethodAmount: Number(data.refundRequestAmount || 0), refundMethodName: '微信支付' }],
+    createTime: String(createTime),
+    rights: {
+      createTime: String(createTime),
+      orderNo: data.orderNo,
+      refundAmount: Number(data.refundAmount || data.refundRequestAmount || 0),
+      refundRequestAmount: Number(data.refundRequestAmount || 0),
+      rightsNo: data.rightsNo,
+      rightsReasonDesc: data.rightsReasonDesc,
+      rightsReasonType: data.rightsReasonType,
+      rightsStatus: data.rightsStatus,
+      rightsStatusName: userRightsStatusName,
+      rightsType: data.rightsType,
+      storeName: '官方商城',
+      userRightsStatus: data.userRightsStatus,
+      userRightsStatusDesc,
+      userRightsStatusName,
+      afterSaleRequireType: isReturnGoods ? 'REFUND_GOODS_MONEY' : 'REFUND_MONEY',
+      rightsImageUrls: data.rightsImageUrls || [],
+      returnId: data.returnId || '',
+    },
+    rightsItem: data.rightsItems || [],
+    rightsRefund: {
+      refundDesc: data.refundMemo || '',
+      refundAmount: Number(data.refundRequestAmount || 0),
+      refundStatus: 1,
+      traceNo: '',
+    },
+    logisticsVO: {
+      logisticsNo: logistics.logisticsNo || '',
+      logisticsCompanyName: logistics.logisticsCompanyName || '',
+      logisticsCompanyCode: logistics.logisticsCompanyCode || '',
+      remark: logistics.remark || '',
+      receiverProvince: RETURN_ADDRESS.province,
+      receiverCity: RETURN_ADDRESS.city,
+      receiverCountry: RETURN_ADDRESS.area,
+      receiverArea: '',
+      receiverAddress: RETURN_ADDRESS.address,
+      receiverPhone: RETURN_ADDRESS.mobile || RETURN_ADDRESS.tel,
+      receiverName: RETURN_ADDRESS.name,
+      returnId: data.returnId || '',
+    },
+    returnId: data.returnId || '',
   };
 };
 
@@ -670,6 +913,51 @@ app.post('/api/products/seed', async (req, res) => {
     const cloudSeedData = seedData.map(withCloudProductPictures);
     await Product.bulkCreate(cloudSeedData);
     res.send({ code: 0, message: '种子数据初始化成功', data: { count: cloudSeedData.length } });
+  } catch (err) {
+    res.send({ code: -1, message: err.message });
+  }
+});
+
+// 初始化全部种子数据（强制重置）：商品 + 首页资产 + 首页 Banner
+app.post('/api/seed', async (req, res) => {
+  try {
+    const steps = [
+      { name: 'products', path: '/api/products/seed' },
+      { name: 'homeAssets', path: '/api/home/assets/seed' },
+      { name: 'homeBanners', path: '/api/home/banners/seed' },
+    ];
+    const results = [];
+
+    for (const step of steps) {
+      const result = await postLocalJson(step.path);
+      if (!result || result.code !== 0) {
+        throw new Error(`${step.name} seed failed: ${result?.message || 'unknown error'}`);
+      }
+      results.push({ name: step.name, result });
+    }
+
+    res.send({ code: 0, message: '全部种子数据初始化成功', data: results });
+  } catch (err) {
+    res.send({ code: -1, message: err.message });
+  }
+});
+
+// 兼容更语义化的路径
+app.post('/api/seed/all', async (req, res) => {
+  try {
+    const results = [];
+    for (const step of [
+      { name: 'products', path: '/api/products/seed' },
+      { name: 'homeAssets', path: '/api/home/assets/seed' },
+      { name: 'homeBanners', path: '/api/home/banners/seed' },
+    ]) {
+      const result = await postLocalJson(step.path);
+      if (!result || result.code !== 0) {
+        throw new Error(`${step.name} seed failed: ${result?.message || 'unknown error'}`);
+      }
+      results.push({ name: step.name, result });
+    }
+    res.send({ code: 0, message: '全部种子数据初始化成功', data: results });
   } catch (err) {
     res.send({ code: -1, message: err.message });
   }
@@ -1106,6 +1394,194 @@ app.put('/api/samples/:id', async (req, res) => {
   }
 });
 
+// ============ 售后/退货接口 ============
+
+app.get('/api/after-sale/preview', async (req, res) => {
+  try {
+    const { orderNo, skuId, numOfSku = 1 } = req.query;
+    const order = await Order.findOne({ where: { orderNo } });
+    if (!order) return res.send({ code: -1, message: '订单不存在' });
+
+    const goodsList = Array.isArray(order.goodsList) ? order.goodsList : [];
+    const goods = goodsList.find((item) => String(item.skuId || item.id) === String(skuId)) || goodsList[0] || {};
+    const quantity = Number(goods.quantity || goods.buyQuantity || 1);
+    const price = Number(goods.price || goods.actualPrice || goods.settlePrice || 0);
+    const applyNum = Math.min(Number(numOfSku) || 1, quantity);
+
+    res.send({
+      code: 0,
+      data: {
+        spuId: goods.spuId || '',
+        skuId: goods.skuId || skuId || goods.id || '',
+        goodsInfo: {
+          goodsName: goods.goodsName || goods.title || '商品名称',
+          skuImage: goods.thumb || goods.image || goods.primaryImage || '',
+          specInfo: normalizeSpecs(goods),
+        },
+        paidAmountEach: String(price),
+        boughtQuantity: quantity,
+        refundableAmount: String(price * applyNum),
+        shippingFeeIncluded: '0',
+        numOfSku: applyNum,
+        numOfSkuAvailable: quantity,
+      },
+    });
+  } catch (err) {
+    res.send({ code: -1, message: err.message });
+  }
+});
+
+app.get('/api/after-sale/reasons', (req, res) => {
+  const rightsReasonList = [
+    { id: 'QUALITY', desc: '商品质量问题' },
+    { id: 'DESC_DIFF', desc: '商品与描述不符' },
+    { id: 'WRONG_GOODS', desc: '发错/漏发' },
+    { id: 'NEGOTIATED', desc: '与商家协商一致' },
+    { id: 'OTHER', desc: '其他原因' },
+  ];
+  res.send({ code: 0, data: { rightsReasonList } });
+});
+
+app.post('/api/after-sale/apply', async (req, res) => {
+  try {
+    const { rights = {}, rightsItem = [], refundMemo = '' } = req.body || {};
+    const order = await Order.findOne({ where: { orderNo: rights.orderNo } });
+    if (!order) return res.send({ code: -1, message: '订单不存在' });
+
+    const goodsList = Array.isArray(order.goodsList) ? order.goodsList : [];
+    const items = (rightsItem || []).map((item, index) => {
+      const goods =
+        goodsList.find((goodsItem) => String(goodsItem.skuId || goodsItem.id) === String(item.skuId)) ||
+        goodsList[index] ||
+        {};
+      const price = Number(goods.price || goods.actualPrice || goods.settlePrice || 0);
+      const quantity = Number(item.rightsQuantity || 1);
+      return {
+        actualPrice: price,
+        goodsName: goods.goodsName || goods.title || '商品名称',
+        goodsPictureUrl: goods.thumb || goods.image || goods.primaryImage || '',
+        itemRefundAmount: Number(rights.refundRequestAmount || price * quantity),
+        itemTotalAmount: price * quantity,
+        rightsQuantity: quantity,
+        skuId: item.skuId || goods.skuId || goods.id || '',
+        spuId: item.spuId || goods.spuId || '',
+        specInfo: normalizeSpecs(goods),
+      };
+    });
+
+    const rightsNo = `AS${Date.now()}${Math.random().toString(36).slice(2, 6)}`;
+    const isReturnGoods = Number(rights.rightsType) === 10;
+    const afterSale = await AfterSale.create({
+      rightsNo,
+      orderNo: rights.orderNo,
+      openid: order.openid || '',
+      rightsType: rights.rightsType || 20,
+      rightsStatus: isReturnGoods ? AFTER_SERVICE_STATUS.THE_APPROVED : AFTER_SERVICE_STATUS.TO_AUDIT,
+      userRightsStatus: isReturnGoods ? SERVICE_STATUS.PENDING_DELIVERY : SERVICE_STATUS.PENDING_VERIFY,
+      refundRequestAmount: String(rights.refundRequestAmount || 0),
+      refundAmount: String(rights.refundRequestAmount || 0),
+      rightsReasonDesc: rights.rightsReasonDesc || '',
+      rightsReasonType: rights.rightsReasonType || '',
+      refundMemo: typeof refundMemo === 'string' ? refundMemo : '',
+      rightsImageUrls: rights.rightsImageUrls || [],
+      rightsItems: items,
+      logistics: {},
+    });
+
+    if (isReturnGoods) {
+      try {
+        const returnId = await createWechatReturnId({ afterSale, order });
+        if (returnId) {
+          await afterSale.update({ returnId });
+        }
+      } catch (err) {
+        console.warn('创建微信退货 ID 失败，已保留本地售后单:', err.message);
+      }
+    }
+
+    res.send({ code: 0, data: { rightsNo: afterSale.rightsNo } });
+  } catch (err) {
+    res.send({ code: -1, message: err.message });
+  }
+});
+
+app.get('/api/after-sale/list', async (req, res) => {
+  try {
+    const pageNum = Math.max(Number(req.query.pageNum) || 1, 1);
+    const pageSize = Math.max(Number(req.query.pageSize) || 10, 1);
+    const afterServiceStatus = req.query.afterServiceStatus;
+    const where = {};
+    if (afterServiceStatus !== undefined && afterServiceStatus !== '' && Number(afterServiceStatus) !== -1) {
+      where.rightsStatus = Number(afterServiceStatus);
+    }
+    const { rows, count } = await AfterSale.findAndCountAll({
+      where,
+      order: [['createdAt', 'DESC']],
+      offset: (pageNum - 1) * pageSize,
+      limit: pageSize,
+    });
+    const allRows = await AfterSale.findAll();
+    const countByStatus = (status) => allRows.filter((item) => Number(item.rightsStatus) === status).length;
+    res.send({
+      code: 0,
+      data: {
+        pageNum,
+        pageSize,
+        totalCount: count,
+        states: {
+          audit: countByStatus(AFTER_SERVICE_STATUS.TO_AUDIT),
+          approved: countByStatus(AFTER_SERVICE_STATUS.THE_APPROVED),
+          complete: countByStatus(AFTER_SERVICE_STATUS.COMPLETE),
+          closed: countByStatus(AFTER_SERVICE_STATUS.CLOSED),
+        },
+        dataList: rows.map(formatAfterSaleForMiniProgram),
+      },
+    });
+  } catch (err) {
+    res.send({ code: -1, message: err.message });
+  }
+});
+
+app.get('/api/after-sale/detail/:rightsNo', async (req, res) => {
+  try {
+    const afterSale = await AfterSale.findOne({ where: { rightsNo: req.params.rightsNo } });
+    if (!afterSale) return res.send({ code: -1, message: '售后单不存在' });
+    res.send({ code: 0, data: [formatAfterSaleForMiniProgram(afterSale)] });
+  } catch (err) {
+    res.send({ code: -1, message: err.message });
+  }
+});
+
+app.post('/api/after-sale/logistics', async (req, res) => {
+  try {
+    const { rightsNo, logisticsCompanyCode, logisticsCompanyName, logisticsNo, remark } = req.body || {};
+    const afterSale = await AfterSale.findOne({ where: { rightsNo } });
+    if (!afterSale) return res.send({ code: -1, message: '售后单不存在' });
+    await afterSale.update({
+      userRightsStatus: SERVICE_STATUS.PENDING_DELIVERY,
+      logistics: { logisticsCompanyCode, logisticsCompanyName, logisticsNo, remark },
+    });
+    res.send({ code: 0, data: formatAfterSaleForMiniProgram(afterSale) });
+  } catch (err) {
+    res.send({ code: -1, message: err.message });
+  }
+});
+
+app.post('/api/after-sale/cancel', async (req, res) => {
+  try {
+    const { rightsNo } = req.body || {};
+    const afterSale = await AfterSale.findOne({ where: { rightsNo } });
+    if (!afterSale) return res.send({ code: -1, message: '售后单不存在' });
+    await afterSale.update({
+      rightsStatus: AFTER_SERVICE_STATUS.CLOSED,
+      userRightsStatus: SERVICE_STATUS.CLOSED,
+    });
+    res.send({ code: 0, data: formatAfterSaleForMiniProgram(afterSale) });
+  } catch (err) {
+    res.send({ code: -1, message: err.message });
+  }
+});
+
 // ============ 订单接口 ============
 
 // 订单列表
@@ -1177,7 +1653,18 @@ app.get('/api/order/detail/:id', async (req, res) => {
 app.post('/api/order/create', async (req, res) => {
   try {
     const headerOpenid = req.headers['x-wx-openid'] || '';
-    const { goodsList = [], userAddress, userName, totalAmount, remark, authorizationCode } = req.body;
+    const {
+      goodsList = [],
+      userAddress,
+      userName,
+      totalAmount,
+      remark,
+      authorizationCode,
+      waybillToken,
+      logisticsNo,
+      logisticsCompanyCode,
+      logisticsCompanyName,
+    } = req.body;
     const codeOpenid = await getOpenidByCode(authorizationCode);
     const openid = headerOpenid || codeOpenid || 'local_dev_user';
 
@@ -1200,6 +1687,10 @@ app.post('/api/order/create', async (req, res) => {
       userAddress: userAddress || null,
       userName: userName || '',
       remark: remark || '',
+      waybillToken: waybillToken || null,
+      logisticsNo: logisticsNo || null,
+      logisticsCompanyCode: logisticsCompanyCode || null,
+      logisticsCompanyName: logisticsCompanyName || null,
     });
 
     console.log('✅ 订单已写入数据库:', order.orderNo, '商品数:', goodsList.length, '总价:', calcTotal);
@@ -1207,7 +1698,7 @@ app.post('/api/order/create', async (req, res) => {
     let payData = null;
     if (isWxPayConfigured() && openid !== 'local_dev_user') {
       const firstGoodsName = goodsList[0] && goodsList[0].goodsName;
-      const { payAmount, prepayId, payInfo } = await createWechatPrepay({
+      const { payAmount, prepayId, payInfo, outTradeNo, out_trade_no } = await createWechatPrepay({
         orderNo,
         openid,
         amount: calcTotal,
@@ -1217,6 +1708,8 @@ app.post('/api/order/create', async (req, res) => {
       payData = {
         channel: 'wechat',
         tradeNo: order.orderNo,
+        outTradeNo,
+        out_trade_no,
         orderNo: order.orderNo,
         orderId: order.id,
         paymentAmount: String(payAmount),
@@ -1231,6 +1724,8 @@ app.post('/api/order/create', async (req, res) => {
       data: {
         orderId: order.id,
         orderNo: order.orderNo,
+        outTradeNo: order.orderNo,
+        out_trade_no: order.orderNo,
         totalAmount: order.totalAmount,
         paymentAmount: order.paymentAmount,
         orderStatus: order.orderStatus,
@@ -1285,7 +1780,7 @@ app.post('/api/order/pay', async (req, res) => {
         return res.send({ code: -1, message: '订单金额异常' });
       }
 
-      const { payAmount, prepayId, payInfo } = await createWechatPrepay({
+      const { payAmount, prepayId, payInfo, outTradeNo, out_trade_no } = await createWechatPrepay({
         orderNo: order.orderNo,
         openid,
         amount: orderAmount,
@@ -1295,6 +1790,8 @@ app.post('/api/order/pay', async (req, res) => {
       payData = {
         channel: 'wechat',
         tradeNo: order.orderNo,
+        outTradeNo,
+        out_trade_no,
         orderNo: order.orderNo,
         orderId: order.id,
         paymentAmount: String(payAmount),
@@ -1309,6 +1806,8 @@ app.post('/api/order/pay', async (req, res) => {
       data: {
         orderId: order.id,
         orderNo: order.orderNo,
+        outTradeNo: order.orderNo,
+        out_trade_no: order.orderNo,
         totalAmount: order.totalAmount,
         paymentAmount: order.paymentAmount,
         orderStatus: order.orderStatus,
@@ -1392,16 +1891,29 @@ app.post('/api/pay/wechat/notify', async (req, res) => {
 
 const port = process.env.PORT || 3000;
 
-const postLocalSeed = (pathName, label) => {
+function postLocalJson(pathName) {
   const http = require('http');
-  http
-    .request({ hostname: '127.0.0.1', port, path: pathName, method: 'POST' }, (res) => {
+  return new Promise((resolve, reject) => {
+    const req = http.request({ hostname: '127.0.0.1', port, path: pathName, method: 'POST' }, (res) => {
       let body = '';
       res.on('data', (chunk) => (body += chunk));
-      res.on('end', () => console.log(`🌱 ${label}:`, body));
-    })
-    .on('error', (err) => console.error(`🌱 ${label}失败:`, err.message))
-    .end();
+      res.on('end', () => {
+        try {
+          resolve(body ? JSON.parse(body) : null);
+        } catch (err) {
+          reject(new Error(`${pathName} 返回非 JSON：${body}`));
+        }
+      });
+    });
+    req.on('error', reject);
+    req.end();
+  });
+}
+
+const postLocalSeed = (pathName, label) => {
+  postLocalJson(pathName)
+    .then((body) => console.log(`🌱 ${label}:`, JSON.stringify(body)))
+    .catch((err) => console.error(`🌱 ${label}失败:`, err.message));
 };
 
 async function bootstrap() {
