@@ -176,11 +176,25 @@ const buildLogisticsVO = (address = {}, order = {}) => {
   };
 };
 
-const formatOrderForMiniProgram = (order) => {
+const formatOrderForMiniProgram = (order, afterSales = []) => {
   const data = typeof order.toJSON === 'function' ? order.toJSON() : order;
   const goodsList = Array.isArray(data.goodsList) ? data.goodsList : [];
+  const normalizedAfterSales = (afterSales || []).map((item) => (
+    typeof item.toJSON === 'function' ? item.toJSON() : item
+  ));
+  const activeAfterSales = normalizedAfterSales.filter((item) => Number(item.rightsStatus) !== AFTER_SERVICE_STATUS.CLOSED);
+  const hasActiveAfterSale = activeAfterSales.length > 0;
+  const latestAfterSale = activeAfterSales[0] || null;
   const createTime = new Date(data.createdAt || Date.now()).getTime();
   const paySuccessTime = data.paidAt ? new Date(data.paidAt).getTime() : null;
+  const latestAfterSaleStatus = Number(latestAfterSale?.rightsStatus);
+  const displayStatusName = hasActiveAfterSale
+    ? (
+        latestAfterSaleStatus === AFTER_SERVICE_STATUS.COMPLETE
+          ? '售后已完成'
+          : Number(latestAfterSale.rightsType) === 10 ? '退货退款中' : '退款处理中'
+      )
+    : data.orderStatusName || '待付款';
   const sampleStatusNameMap = {
     returning: '回寄中',
     testing: '样本检测中',
@@ -213,7 +227,8 @@ const formatOrderForMiniProgram = (order) => {
     cancelType: 0,
     cancelReasonType: 0,
     cancelReason: '',
-    rightsType: 0,
+    rightsType: latestAfterSale ? latestAfterSale.rightsType : 0,
+    rightsNo: latestAfterSale ? latestAfterSale.rightsNo : '',
     createTime: String(createTime),
     orderItemVOs: goodsList.map((goods, index) => {
       const specs = normalizeSpecs(goods);
@@ -242,7 +257,7 @@ const formatOrderForMiniProgram = (order) => {
         tagText: goods.tagText || null,
         outCode: null,
         labelVOs: null,
-        buttonVOs: [40, 50].includes(Number(data.orderStatus))
+        buttonVOs: !hasActiveAfterSale && [40, 50].includes(Number(data.orderStatus))
           ? [{ primary: false, type: 4, name: '申请售后' }]
           : [],
       };
@@ -266,16 +281,16 @@ const formatOrderForMiniProgram = (order) => {
     waybill_token: data.waybillToken || '',
     sampleStatus: data.sampleStatus || '',
     sampleStatusName: sampleStatusNameMap[data.sampleStatus] || data.sampleStatus || '',
-    buttonVOs: getOrderButtons(data.orderStatus),
+    buttonVOs: hasActiveAfterSale ? [{ primary: false, type: 5, name: '查看售后' }] : getOrderButtons(data.orderStatus),
     labelVOs: null,
     invoiceVO: null,
     couponAmount: '0',
     autoCancelTime: createTime + 30 * 60 * 1000,
-    orderStatusName: data.orderStatusName || '待付款',
+    orderStatusName: displayStatusName,
     orderStatusRemark:
       Number(data.orderStatus) === 5
         ? `需支付￥${(Number(data.paymentAmount || data.totalAmount || 0) / 100).toFixed(2)}`
-        : data.orderStatusName || '',
+        : displayStatusName,
     logisticsLogVO: null,
     trajectoryVos: data.trajectoryVos || [],
     invoiceStatus: 3,
@@ -427,6 +442,13 @@ const LOGISTICS_ACTION_CONFIG = {
     orderStatus: 40,
     orderStatusName: '待收货',
   },
+  200003: {
+    code: '200003',
+    title: '已发货',
+    status: '商家已发货',
+    orderStatus: 40,
+    orderStatusName: '待收货',
+  },
   300003: {
     code: '300003',
     title: '签收成功',
@@ -495,6 +517,79 @@ const testUpdateWechatLogisticsOrder = async ({ orderNo, waybillId, actionType }
   });
 };
 
+const formatWechatUploadTime = (date = new Date()) => {
+  const pad = (value, length = 2) => String(value).padStart(length, '0');
+  const local = new Date(date.getTime() + 8 * 60 * 60 * 1000);
+  return `${local.getUTCFullYear()}-${pad(local.getUTCMonth() + 1)}-${pad(local.getUTCDate())}` +
+    `T${pad(local.getUTCHours())}:${pad(local.getUTCMinutes())}:${pad(local.getUTCSeconds())}` +
+    `.${pad(local.getUTCMilliseconds(), 3)}+08:00`;
+};
+
+const buildWechatShippingPayload = ({ order, trackingNo, expressCompany, itemDesc, receiverContact }) => {
+  const data = typeof order.toJSON === 'function' ? order.toJSON() : order;
+  const goodsList = Array.isArray(data.goodsList) ? data.goodsList : [];
+  const userAddress = data.userAddress || {};
+  const description =
+    itemDesc ||
+    goodsList
+      .map((goods) => goods.goodsName || goods.title)
+      .filter(Boolean)
+      .join('、')
+      .slice(0, 120) ||
+    `订单${data.orderNo}`;
+
+  const orderKey = data.transactionId
+    ? {
+        order_number_type: 2,
+        transaction_id: data.transactionId,
+      }
+    : {
+        order_number_type: 1,
+        mchid: wxPayConfig.mchId,
+        out_trade_no: data.orderNo,
+      };
+
+  return {
+    order_key: orderKey,
+    logistics_type: 1,
+    delivery_mode: 1,
+    is_all_delivered: true,
+    shipping_list: [
+      {
+        tracking_no: trackingNo,
+        express_company: expressCompany,
+        item_desc: description,
+        contact: {
+          receiver_contact: receiverContact || userAddress.phone || userAddress.phoneNumber || '',
+        },
+      },
+    ],
+    upload_time: formatWechatUploadTime(),
+    payer: {
+      openid: data.openid || '',
+    },
+  };
+};
+
+const uploadWechatShippingInfo = async (payload) => {
+  const accessToken = await getWechatAccessToken();
+  if (!accessToken) {
+    throw new Error('未配置 WECHAT_APP_ID/WECHAT_APP_SECRET，无法同步微信发货');
+  }
+
+  const result = await requestWechatJson({
+    method: 'POST',
+    path: `/wxa/sec/order/upload_shipping_info?access_token=${encodeURIComponent(accessToken)}`,
+    data: payload,
+  });
+
+  if (result.errcode) {
+    throw new Error(result.errmsg || `微信发货信息录入失败：${result.errcode}`);
+  }
+
+  return result;
+};
+
 const SERVICE_STATUS = {
   PENDING_VERIFY: 100,
   VERIFIED: 110,
@@ -508,6 +603,28 @@ const AFTER_SERVICE_STATUS = {
   THE_APPROVED: 20,
   COMPLETE: 50,
   CLOSED: 60,
+};
+
+const fetchAfterSalesForOrder = (orderNo) => AfterSale.findAll({
+  where: { orderNo },
+  order: [['createdAt', 'DESC']],
+});
+
+const fetchAfterSalesForOrders = async (orderNos = []) => {
+  const uniqueOrderNos = [...new Set(orderNos.filter(Boolean))];
+  if (!uniqueOrderNos.length) return {};
+
+  const afterSales = await AfterSale.findAll({
+    where: { orderNo: { [Op.in]: uniqueOrderNos } },
+    order: [['createdAt', 'DESC']],
+  });
+
+  return afterSales.reduce((map, item) => {
+    const data = typeof item.toJSON === 'function' ? item.toJSON() : item;
+    if (!map[data.orderNo]) map[data.orderNo] = [];
+    map[data.orderNo].push(item);
+    return map;
+  }, {});
 };
 
 const formatAfterSaleForMiniProgram = (afterSale) => {
@@ -644,6 +761,24 @@ app.use(express.json({
 }));
 app.use(cors());
 app.use(logger);
+
+const adminAuth = (req, res, next) => {
+  const token = process.env.ADMIN_TOKEN || '';
+  if (!token) return next();
+
+  const requestToken = req.headers['x-admin-token'] || req.query.token || (req.body && req.body.token);
+  if (requestToken === token) return next();
+
+  return res.status(401).send({ code: -1, message: '未授权' });
+};
+
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'index.html'));
+});
+
+app.get('/admin', (req, res) => {
+  res.sendFile(path.join(__dirname, 'index.html'));
+});
 
 // 小程序调用，获取微信 Open ID
 app.get('/api/wx_openid', async (req, res) => {
@@ -1689,6 +1824,7 @@ app.get('/api/order/list', async (req, res) => {
       offset: (pageNum - 1) * pageSize,
       limit: pageSize,
     });
+    const afterSaleMap = await fetchAfterSalesForOrders(rows.map((order) => order.orderNo));
 
     const statuses = [-1, 5, 10, 40, 50];
     const tabCounts = await Promise.all(
@@ -1701,7 +1837,7 @@ app.get('/api/order/list', async (req, res) => {
     res.send({
       code: 0,
       data: {
-        orders: rows.map(formatOrderForMiniProgram),
+        orders: rows.map((order) => formatOrderForMiniProgram(order, afterSaleMap[order.orderNo] || [])),
         total: count,
         tabCounts,
       },
@@ -1729,7 +1865,8 @@ app.get('/api/order/detail/:id', async (req, res) => {
       return res.send({ code: -1, message: '订单不存在' });
     }
 
-    res.send({ code: 0, data: formatOrderForMiniProgram(order) });
+    const afterSales = await fetchAfterSalesForOrder(order.orderNo);
+    res.send({ code: 0, data: formatOrderForMiniProgram(order, afterSales) });
   } catch (err) {
     console.error('获取订单详情失败:', err);
     res.send({ code: -1, message: err.message });
@@ -1777,6 +1914,7 @@ app.post('/api/order/logistics/test-update', async (req, res) => {
       logisticsCompanyName,
       trajectoryVos,
     });
+    const afterSales = await fetchAfterSalesForOrder(order.orderNo);
 
     res.send({
       code: 0,
@@ -1786,11 +1924,89 @@ app.post('/api/order/logistics/test-update', async (req, res) => {
       data: {
         wechatResult,
         wechatWarning,
-        order: formatOrderForMiniProgram(order),
+        order: formatOrderForMiniProgram(order, afterSales),
       },
     });
   } catch (err) {
     console.error('测试物流状态更新失败:', err);
+    res.send({ code: -1, message: err.message });
+  }
+});
+
+app.get('/api/admin/order/:id', adminAuth, async (req, res) => {
+  try {
+    const id = req.params.id;
+    const conditions = [{ orderNo: id }];
+    if (/^\d+$/.test(id)) {
+      conditions.push({ id: Number(id) });
+    }
+
+    const order = await Order.findOne({ where: { [Op.or]: conditions } });
+    if (!order) {
+      return res.send({ code: -1, message: '订单不存在' });
+    }
+
+    const afterSales = await fetchAfterSalesForOrder(order.orderNo);
+    res.send({ code: 0, data: formatOrderForMiniProgram(order, afterSales) });
+  } catch (err) {
+    res.send({ code: -1, message: err.message });
+  }
+});
+
+app.post('/api/admin/order/ship', adminAuth, async (req, res) => {
+  try {
+    const {
+      orderNo,
+      trackingNo,
+      expressCompany,
+      expressCompanyName,
+      itemDesc,
+      receiverContact,
+      localOnly = false,
+    } = req.body || {};
+
+    if (!orderNo) return res.send({ code: -1, message: '请填写订单号' });
+    if (!trackingNo) return res.send({ code: -1, message: '请填写物流单号' });
+    if (!expressCompany) return res.send({ code: -1, message: '请填写微信快递公司编码，如 SF、YTO、ZTO' });
+
+    const order = await Order.findOne({ where: { orderNo } });
+    if (!order) return res.send({ code: -1, message: '订单不存在' });
+
+    const shippingPayload = buildWechatShippingPayload({
+      order,
+      trackingNo,
+      expressCompany,
+      itemDesc,
+      receiverContact,
+    });
+
+    let wechatResult = { skipped: true, errmsg: '已选择仅更新本地订单' };
+    if (!localOnly) {
+      wechatResult = await uploadWechatShippingInfo(shippingPayload);
+    }
+
+    const trajectoryVos = mergeTrajectory(order.trajectoryVos || [], 200003);
+    await order.update({
+      orderStatus: 40,
+      orderStatusName: '待收货',
+      logisticsNo: trackingNo,
+      logisticsCompanyCode: expressCompany,
+      logisticsCompanyName: expressCompanyName || expressCompany,
+      trajectoryVos,
+    });
+    const afterSales = await fetchAfterSalesForOrder(order.orderNo);
+
+    res.send({
+      code: 0,
+      message: localOnly ? '本地订单已发货' : '本地订单与微信发货信息已同步',
+      data: {
+        wechatResult,
+        shippingPayload,
+        order: formatOrderForMiniProgram(order, afterSales),
+      },
+    });
+  } catch (err) {
+    console.error('发货同步失败:', err);
     res.send({ code: -1, message: err.message });
   }
 });
@@ -1998,7 +2214,8 @@ app.post('/api/order/paid', async (req, res) => {
       });
     }
 
-    res.send({ code: 0, data: formatOrderForMiniProgram(order) });
+    const afterSales = await fetchAfterSalesForOrder(order.orderNo);
+    res.send({ code: 0, data: formatOrderForMiniProgram(order, afterSales) });
   } catch (err) {
     console.error('同步支付状态失败:', err);
     res.send({ code: -1, message: err.message });
