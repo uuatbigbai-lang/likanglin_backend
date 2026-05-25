@@ -3,6 +3,7 @@ const { Sequelize, DataTypes } = require("sequelize");
 // 判断是否为本地开发环境（没有 MYSQL_ADDRESS 时使用 SQLite 内存数据库）
 const { MYSQL_USERNAME, MYSQL_PASSWORD, MYSQL_ADDRESS = "" } = process.env;
 const isLocal = !MYSQL_ADDRESS;
+const shouldAlterTables = isLocal || process.env.DB_SYNC_ALTER === "true";
 
 let sequelize;
 if (isLocal) {
@@ -614,18 +615,64 @@ const HomeBanner = sequelize.define("HomeBanner", {
   },
 });
 
+const syncModels = [
+  Counter,
+  User,
+  Product,
+  Address,
+  CartItem,
+  Order,
+  AfterSale,
+  Sample,
+  HomeAsset,
+  HomeBanner,
+];
+
+async function ensureColumn(tableName, columnName, definition) {
+  const queryInterface = sequelize.getQueryInterface();
+  const table = await queryInterface.describeTable(tableName);
+  if (table[columnName]) return;
+  await queryInterface.addColumn(tableName, columnName, definition);
+}
+
+async function ensureOnlineSchema() {
+  await ensureColumn("Orders", "waybillToken", {
+    type: DataTypes.STRING(256),
+    allowNull: true,
+    comment: "微信物流查询插件 waybill_token",
+  });
+  await ensureColumn("Orders", "logisticsNo", {
+    type: DataTypes.STRING(128),
+    allowNull: true,
+    comment: "物流运单号",
+  });
+  await ensureColumn("Orders", "logisticsCompanyCode", {
+    type: DataTypes.STRING(64),
+    allowNull: true,
+    comment: "物流公司编码或运力id",
+  });
+  await ensureColumn("Orders", "logisticsCompanyName", {
+    type: DataTypes.STRING(80),
+    allowNull: true,
+    comment: "物流公司名称",
+  });
+  await ensureColumn("Orders", "sampleStatus", {
+    type: DataTypes.STRING(32),
+    allowNull: true,
+    defaultValue: "",
+    comment: "检测样本状态 returning/testing/completed",
+  });
+}
+
 // 数据库初始化方法
 async function init() {
-  await Counter.sync({ alter: true });
-  await User.sync({ alter: true });
-  await Product.sync({ alter: true });
-  await Address.sync({ alter: true });
-  await CartItem.sync({ alter: true });
-  await Order.sync({ alter: true });
-  await AfterSale.sync({ alter: true });
-  await Sample.sync({ alter: true });
-  await HomeAsset.sync({ alter: true });
-  await HomeBanner.sync({ alter: true });
+  for (const model of syncModels) {
+    await model.sync(shouldAlterTables ? { alter: true } : {});
+  }
+
+  if (!shouldAlterTables) {
+    await ensureOnlineSchema();
+  }
 }
 
 // 导出初始化方法和模型
