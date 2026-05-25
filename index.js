@@ -445,6 +445,8 @@ const getLogisticsActionConfig = (actionType) =>
     orderStatusName: '待收货',
   };
 
+const getLogisticsActionMsg = (actionType) => getLogisticsActionConfig(actionType).status;
+
 const mergeTrajectory = (trajectoryVos = [], actionType, eventTime = Date.now()) => {
   const config = getLogisticsActionConfig(actionType);
   const node = {
@@ -486,7 +488,9 @@ const testUpdateWechatLogisticsOrder = async ({ orderNo, waybillId, actionType }
       order_id: orderNo,
       delivery_id: WX_TEST_DELIVERY_ID,
       waybill_id: waybillId,
+      action_time: Math.floor(Date.now() / 1000),
       action_type: Number(actionType),
+      action_msg: getLogisticsActionMsg(actionType),
     },
   });
 };
@@ -1759,13 +1763,10 @@ app.post('/api/order/logistics/test-update', async (req, res) => {
       actionType: nextActionType,
     });
 
-    if (wechatResult && wechatResult.errcode) {
-      return res.send({
-        code: -1,
-        message: wechatResult.errmsg || `微信测试物流更新失败：${wechatResult.errcode}`,
-        data: wechatResult,
-      });
-    }
+    const wechatWarning =
+      wechatResult && wechatResult.errcode
+        ? wechatResult.errmsg || `微信测试物流更新失败：${wechatResult.errcode}`
+        : '';
 
     await order.update({
       orderStatus: actionConfig.orderStatus,
@@ -1779,9 +1780,12 @@ app.post('/api/order/logistics/test-update', async (req, res) => {
 
     res.send({
       code: 0,
-      message: '测试物流状态已更新',
+      message: wechatWarning
+        ? `本地订单物流已更新；微信测试接口未更新：${wechatWarning}`
+        : '测试物流状态已更新',
       data: {
         wechatResult,
+        wechatWarning,
         order: formatOrderForMiniProgram(order),
       },
     });
