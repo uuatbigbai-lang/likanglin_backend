@@ -277,6 +277,7 @@ const formatOrderForMiniProgram = (order) => {
         ? `需支付￥${(Number(data.paymentAmount || data.totalAmount || 0) / 100).toFixed(2)}`
         : data.orderStatusName || '',
     logisticsLogVO: null,
+    trajectoryVos: data.trajectoryVos || [],
     invoiceStatus: 3,
     invoiceDesc: '暂不开发票',
     invoiceUrl: null,
@@ -406,6 +407,88 @@ const createWechatReturnId = async ({ afterSale, order }) => {
     throw new Error(result.errmsg || `创建微信退货 ID 失败：${result.errcode}`);
   }
   return result.return_id || '';
+};
+
+const WX_TEST_DELIVERY_ID = 'TEST';
+const WX_TEST_BIZ_ID = 'test_biz_id';
+
+const LOGISTICS_ACTION_CONFIG = {
+  100001: {
+    code: '100001',
+    title: '已揽收',
+    status: '快递员已揽收',
+    orderStatus: 40,
+    orderStatusName: '待收货',
+  },
+  200001: {
+    code: '200001',
+    title: '运输中',
+    status: '包裹正在运输中',
+    orderStatus: 40,
+    orderStatusName: '待收货',
+  },
+  300003: {
+    code: '300003',
+    title: '签收成功',
+    status: '包裹已签收成功',
+    orderStatus: 50,
+    orderStatusName: '交易完成',
+  },
+};
+
+const getLogisticsActionConfig = (actionType) =>
+  LOGISTICS_ACTION_CONFIG[Number(actionType)] || {
+    code: String(actionType || '200001'),
+    title: '物流更新',
+    status: `物流状态已更新：${actionType}`,
+    orderStatus: 40,
+    orderStatusName: '待收货',
+  };
+
+const mergeTrajectory = (trajectoryVos = [], actionType, eventTime = Date.now()) => {
+  const config = getLogisticsActionConfig(actionType);
+  const node = {
+    status: config.status,
+    timestamp: String(eventTime),
+    remark: null,
+  };
+  const next = Array.isArray(trajectoryVos) ? [...trajectoryVos] : [];
+  const existed = next.find((item) => String(item.code) === String(config.code));
+
+  if (existed) {
+    existed.title = config.title;
+    existed.nodes = [node, ...((existed.nodes || []).filter((item) => item.status !== node.status))];
+    return next;
+  }
+
+  return [
+    {
+      title: config.title,
+      icon: 'deliver',
+      code: config.code,
+      nodes: [node],
+    },
+    ...next,
+  ];
+};
+
+const testUpdateWechatLogisticsOrder = async ({ orderNo, waybillId, actionType }) => {
+  const accessToken = await getWechatAccessToken();
+  if (!accessToken) {
+    return { skipped: true, errmsg: '未配置 WECHAT_APP_ID/WECHAT_APP_SECRET，已跳过微信测试接口调用' };
+  }
+
+  return requestWechatJson({
+    method: 'POST',
+    path: `/cgi-bin/express/business/test_update_order?access_token=${encodeURIComponent(accessToken)}`,
+    data: {
+      biz_id: WX_TEST_BIZ_ID,
+      order_id: orderNo,
+      delivery_id: WX_TEST_DELIVERY_ID,
+      waybill_id: waybillId,
+      action_type: Number(actionType),
+    },
+  });
 };
 
 const SERVICE_STATUS = {
@@ -1645,6 +1728,65 @@ app.get('/api/order/detail/:id', async (req, res) => {
     res.send({ code: 0, data: formatOrderForMiniProgram(order) });
   } catch (err) {
     console.error('获取订单详情失败:', err);
+    res.send({ code: -1, message: err.message });
+  }
+});
+
+app.post('/api/order/logistics/test-update', async (req, res) => {
+  try {
+    const {
+      orderNo = 'ORD1779679337988cpvs',
+      transactionId = '4200003048202605259472182317',
+      actionType = 200001,
+      action_type,
+      logisticsNo,
+      logisticsCompanyCode = WX_TEST_DELIVERY_ID,
+      logisticsCompanyName = '微信测试物流',
+    } = req.body || {};
+
+    const order = await Order.findOne({ where: { orderNo } });
+    if (!order) {
+      return res.send({ code: -1, message: '订单不存在' });
+    }
+
+    const waybillId = String(logisticsNo || `TEST${String(transactionId || order.transactionId || orderNo).slice(-12)}`);
+    const nextActionType = action_type || actionType;
+    const actionConfig = getLogisticsActionConfig(nextActionType);
+    const trajectoryVos = mergeTrajectory(order.trajectoryVos || [], nextActionType);
+    const wechatResult = await testUpdateWechatLogisticsOrder({
+      orderNo,
+      waybillId,
+      actionType: nextActionType,
+    });
+
+    if (wechatResult && wechatResult.errcode) {
+      return res.send({
+        code: -1,
+        message: wechatResult.errmsg || `微信测试物流更新失败：${wechatResult.errcode}`,
+        data: wechatResult,
+      });
+    }
+
+    await order.update({
+      orderStatus: actionConfig.orderStatus,
+      orderStatusName: actionConfig.orderStatusName,
+      transactionId: transactionId || order.transactionId,
+      logisticsNo: waybillId,
+      logisticsCompanyCode,
+      logisticsCompanyName,
+      trajectoryVos,
+    });
+
+    res.send({
+      code: 0,
+      message: '测试物流状态已更新',
+      data: {
+        wechatResult,
+        order: formatOrderForMiniProgram(order),
+      },
+    });
+  } catch (err) {
+    console.error('测试物流状态更新失败:', err);
     res.send({ code: -1, message: err.message });
   }
 });

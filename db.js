@@ -368,6 +368,11 @@ const Order = sequelize.define("Order", {
     allowNull: true,
     comment: "物流公司名称",
   },
+  trajectoryVos: {
+    type: DataTypes.JSON,
+    defaultValue: [],
+    comment: "订单物流轨迹",
+  },
   sampleStatus: {
     type: DataTypes.STRING(32),
     allowNull: true,
@@ -655,6 +660,11 @@ async function ensureOnlineSchema() {
     type: DataTypes.STRING(80),
     allowNull: true,
     comment: "物流公司名称",
+  });
+  await ensureColumn("Orders", "trajectoryVos", {
+    type: DataTypes.JSON,
+    defaultValue: [],
+    comment: "订单物流轨迹",
   });
   await ensureColumn("Orders", "sampleStatus", {
     type: DataTypes.STRING(32),
