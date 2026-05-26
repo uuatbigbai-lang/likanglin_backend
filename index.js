@@ -143,6 +143,8 @@ const normalizeSpecs = (goods) => {
     .map((specValue) => ({ specValue }));
 };
 
+const isWechatPayTransactionId = (value) => /^420\d{25,}$/.test(String(value || '').trim());
+
 const buildLogisticsVO = (address = {}, order = {}) => {
   const receiverAddress = address.detailAddress || address.address || '';
   return {
@@ -538,7 +540,7 @@ const buildWechatShippingPayload = ({ order, trackingNo, expressCompany, itemDes
       .slice(0, 120) ||
     `订单${data.orderNo}`;
 
-  const orderKey = data.transactionId
+  const orderKey = isWechatPayTransactionId(data.transactionId)
     ? {
         order_number_type: 2,
         transaction_id: data.transactionId,
@@ -625,7 +627,9 @@ const uploadWechatShippingInfo = async (payload) => {
   });
 
   if (result.errcode) {
-    throw new Error(result.errmsg || `微信发货信息录入失败：${result.errcode}`);
+    const error = new Error(result.errmsg || `微信发货信息录入失败：${result.errcode}`);
+    error.wechatResult = result;
+    throw error;
   }
 
   return result;
@@ -2311,12 +2315,19 @@ app.post('/api/admin/order/ship', adminAuth, async (req, res) => {
     });
 
     let wechatResult = { skipped: true, errmsg: '已选择仅更新本地订单' };
+    let wechatWarning = '';
     if (!localOnly) {
-      wechatResult = await uploadWechatShippingInfo(shippingPayload);
       try {
-        await setWechatOrderMsgJumpPath();
-      } catch (jumpErr) {
-        console.warn('微信订单消息跳转路径设置失败:', jumpErr.message);
+        wechatResult = await uploadWechatShippingInfo(shippingPayload);
+        try {
+          await setWechatOrderMsgJumpPath();
+        } catch (jumpErr) {
+          console.warn('微信订单消息跳转路径设置失败:', jumpErr.message);
+        }
+      } catch (wechatErr) {
+        wechatResult = wechatErr.wechatResult || { errmsg: wechatErr.message };
+        wechatWarning = wechatErr.message;
+        console.warn('微信发货同步失败，已继续更新本地订单:', orderNo, wechatErr.message);
       }
     }
 
@@ -2333,9 +2344,14 @@ app.post('/api/admin/order/ship', adminAuth, async (req, res) => {
 
     res.send({
       code: 0,
-      message: localOnly ? '本地订单已发货' : '本地订单与微信发货信息已同步',
+      message: localOnly
+        ? '本地订单已发货'
+        : wechatWarning
+          ? `本地订单已发货；微信发货未同步：${wechatWarning}`
+          : '本地订单与微信发货信息已同步',
       data: {
         wechatResult,
+        wechatWarning,
         shippingPayload,
         order: formatOrderForMiniProgram(order, afterSales),
       },
