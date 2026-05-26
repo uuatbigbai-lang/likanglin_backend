@@ -128,6 +128,9 @@ const getOrderButtons = (orderStatus) => {
   if (Number(orderStatus) === 5) {
     return [{ primary: true, type: 1, name: '付款' }];
   }
+  if (Number(orderStatus) === 40) {
+    return [{ primary: true, type: 3, name: '确认收货' }];
+  }
   return [];
 };
 
@@ -259,7 +262,7 @@ const formatOrderForMiniProgram = (order, afterSales = []) => {
         tagText: goods.tagText || null,
         outCode: null,
         labelVOs: null,
-        buttonVOs: !hasActiveAfterSale && [40, 50].includes(Number(data.orderStatus))
+        buttonVOs: !hasActiveAfterSale && Number(data.orderStatus) === 50
           ? [{ primary: false, type: 4, name: '申请售后' }]
           : [],
       };
@@ -2207,6 +2210,34 @@ app.post('/api/order/wechat/sync', async (req, res) => {
     });
   } catch (err) {
     console.error('微信订单状态同步失败:', err);
+    res.send({ code: -1, message: err.message });
+  }
+});
+
+app.post('/api/order/confirm-received', async (req, res) => {
+  try {
+    const { orderNo, orderId } = req.body || {};
+    const conditions = [];
+    if (orderNo) conditions.push({ orderNo });
+    if (orderId && /^\d+$/.test(String(orderId))) conditions.push({ id: Number(orderId) });
+    if (!conditions.length) return res.send({ code: -1, message: '缺少订单标识' });
+
+    const order = await Order.findOne({ where: { [Op.or]: conditions } });
+    if (!order) return res.send({ code: -1, message: '订单不存在' });
+    if (Number(order.orderStatus) !== 40) {
+      return res.send({ code: -1, message: '当前订单状态不可确认收货' });
+    }
+
+    await order.update({
+      orderStatus: 50,
+      orderStatusName: '交易完成',
+      trajectoryVos: mergeTrajectory(order.trajectoryVos || [], 300003),
+    });
+    const afterSales = await fetchAfterSalesForOrder(order.orderNo);
+
+    res.send({ code: 0, data: formatOrderForMiniProgram(order, afterSales) });
+  } catch (err) {
+    console.error('确认收货失败:', err);
     res.send({ code: -1, message: err.message });
   }
 });
