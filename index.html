@@ -3,260 +3,253 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>订单发货管理</title>
+  <title>订单管理</title>
   <style>
-    * {
-      box-sizing: border-box;
-    }
-
+    * { box-sizing: border-box; }
     body {
       margin: 0;
-      background: #f5f7f6;
-      color: #17201a;
+      background: #f4f6f8;
+      color: #172033;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
-
     .shell {
-      max-width: 1120px;
+      max-width: 1360px;
       margin: 0 auto;
-      padding: 32px 20px 56px;
+      padding: 24px 20px 56px;
     }
-
     .topbar {
-      display: flex;
-      align-items: flex-end;
-      justify-content: space-between;
-      gap: 24px;
-      margin-bottom: 24px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 260px;
+      gap: 20px;
+      align-items: end;
+      margin-bottom: 18px;
     }
-
     h1 {
       margin: 0;
-      font-size: 28px;
-      line-height: 36px;
+      font-size: 26px;
+      line-height: 34px;
     }
-
     .muted {
-      margin: 8px 0 0;
-      color: #65736a;
+      margin: 6px 0 0;
+      color: #667085;
       font-size: 14px;
       line-height: 22px;
     }
-
-    .grid {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) 360px;
-      gap: 20px;
-      align-items: start;
-    }
-
+    .toolbar,
     .panel {
       background: #fff;
-      border: 1px solid #e2e8e4;
+      border: 1px solid #e4e7ec;
       border-radius: 8px;
-      padding: 20px;
-      box-shadow: 0 8px 24px rgba(26, 50, 35, 0.05);
+      box-shadow: 0 8px 22px rgba(20, 35, 60, 0.05);
     }
-
-    .panel + .panel {
-      margin-top: 16px;
-    }
-
-    .panel-title {
-      margin: 0 0 16px;
-      font-size: 18px;
-      line-height: 26px;
-    }
-
-    .row {
+    .toolbar {
       display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
+      grid-template-columns: minmax(220px, 1fr) 180px 160px auto;
       gap: 12px;
+      align-items: end;
+      padding: 16px;
+      margin-bottom: 16px;
     }
-
     label {
       display: block;
       margin-bottom: 6px;
-      color: #405047;
+      color: #344054;
       font-size: 13px;
       line-height: 20px;
-      font-weight: 600;
+      font-weight: 700;
     }
-
     input,
-    select,
-    textarea {
+    select {
       width: 100%;
       min-height: 40px;
-      border: 1px solid #cfd8d2;
+      border: 1px solid #d0d5dd;
       border-radius: 6px;
-      padding: 9px 11px;
+      padding: 8px 10px;
       background: #fff;
-      color: #17201a;
+      color: #172033;
       font-size: 14px;
       outline: none;
     }
-
-    textarea {
-      min-height: 90px;
-      resize: vertical;
-      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    }
-
     input:focus,
-    select:focus,
-    textarea:focus {
-      border-color: #2f7d43;
-      box-shadow: 0 0 0 3px rgba(47, 125, 67, 0.12);
+    select:focus {
+      border-color: #2472c8;
+      box-shadow: 0 0 0 3px rgba(36, 114, 200, 0.12);
     }
-
-    .field {
-      margin-bottom: 14px;
-    }
-
-    .actions {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 10px;
-      margin-top: 16px;
-    }
-
     button {
       min-height: 40px;
       border: 0;
       border-radius: 6px;
-      padding: 0 16px;
-      background: #2f7d43;
+      padding: 0 14px;
+      background: #2472c8;
       color: #fff;
       font-size: 14px;
       font-weight: 700;
       cursor: pointer;
+      white-space: nowrap;
     }
-
     button.secondary {
-      background: #e8f1eb;
-      color: #246438;
+      background: #edf4ff;
+      color: #1f5f9f;
     }
-
-    button.danger {
-      background: #9b2f2f;
+    button.subtle {
+      background: #f2f4f7;
+      color: #344054;
     }
-
     button:disabled {
       cursor: not-allowed;
       opacity: 0.55;
     }
-
-    .kv {
-      display: grid;
-      grid-template-columns: 130px minmax(0, 1fr);
-      gap: 8px 12px;
-      font-size: 14px;
-      line-height: 22px;
-    }
-
-    .kv dt {
-      color: #65736a;
-    }
-
-    .kv dd {
-      margin: 0;
-      word-break: break-all;
-    }
-
-    .goods {
-      display: grid;
-      gap: 10px;
-      margin-top: 16px;
-    }
-
-    .goods-item {
-      display: grid;
-      grid-template-columns: 56px minmax(0, 1fr);
-      gap: 12px;
-      padding: 10px;
-      border: 1px solid #e7ece8;
-      border-radius: 6px;
-    }
-
-    .thumb {
-      width: 56px;
-      height: 56px;
-      border-radius: 6px;
-      object-fit: cover;
-      background: #eef2ef;
-    }
-
-    .goods-title {
-      font-weight: 700;
-      line-height: 22px;
-    }
-
-    .goods-sub {
-      margin-top: 4px;
-      color: #65736a;
-      font-size: 13px;
-      line-height: 20px;
-    }
-
     .notice {
-      min-height: 42px;
+      display: none;
       margin-bottom: 16px;
       padding: 10px 12px;
       border-radius: 6px;
-      background: #eef6f0;
-      color: #235b34;
+      background: #ecfdf3;
+      color: #027a48;
       font-size: 14px;
       line-height: 22px;
-      display: none;
       white-space: pre-wrap;
     }
-
     .notice.error {
-      background: #fff0f0;
-      color: #8a2525;
+      background: #fef3f2;
+      color: #b42318;
     }
-
-    .notice.show {
-      display: block;
+    .notice.show { display: block; }
+    .stats {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 16px;
     }
-
-    .checkbox-row {
+    .stat {
+      border: 1px solid #d0d5dd;
+      border-radius: 999px;
+      padding: 7px 12px;
+      background: #fff;
+      color: #344054;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    .stat.active {
+      border-color: #2472c8;
+      background: #edf4ff;
+      color: #1f5f9f;
+      font-weight: 700;
+    }
+    .panel {
+      overflow: hidden;
+    }
+    .table-wrap {
+      overflow-x: auto;
+    }
+    table {
+      width: 100%;
+      min-width: 1040px;
+      border-collapse: collapse;
+    }
+    th,
+    td {
+      padding: 13px 14px;
+      border-bottom: 1px solid #eef2f6;
+      text-align: left;
+      vertical-align: top;
+      font-size: 14px;
+      line-height: 22px;
+    }
+    th {
+      background: #f8fafc;
+      color: #475467;
+      font-size: 12px;
+      line-height: 18px;
+      font-weight: 800;
+    }
+    tr:hover td {
+      background: #fbfdff;
+    }
+    .order-no {
+      font-weight: 800;
+      word-break: break-all;
+    }
+    .goods {
+      max-width: 320px;
+    }
+    .goods-title {
+      font-weight: 700;
+    }
+    .goods-sub,
+    .small {
+      color: #667085;
+      font-size: 12px;
+      line-height: 18px;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 24px;
+      border-radius: 999px;
+      padding: 2px 9px;
+      background: #f2f4f7;
+      color: #344054;
+      font-size: 12px;
+      font-weight: 800;
+    }
+    .badge.pending { background: #fff7e6; color: #b54708; }
+    .badge.shipped { background: #edf4ff; color: #1f5f9f; }
+    .badge.done { background: #ecfdf3; color: #027a48; }
+    .badge.after-sale { background: #fff1f3; color: #c01048; }
+    .row-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .ship-row {
+      display: none;
+      background: #f8fafc;
+    }
+    .ship-row.active {
+      display: table-row;
+    }
+    .ship-form {
+      display: grid;
+      grid-template-columns: minmax(180px, 1.2fr) 150px 150px minmax(150px, 1fr) minmax(170px, 1fr) auto;
+      gap: 10px;
+      align-items: end;
+    }
+    .checkbox-line {
       display: flex;
       gap: 8px;
       align-items: center;
-      color: #405047;
-      font-size: 14px;
+      min-height: 40px;
+      color: #475467;
+      font-size: 13px;
     }
-
-    .checkbox-row input {
+    .checkbox-line input {
       width: auto;
       min-height: auto;
     }
-
-    .raw {
-      max-height: 320px;
-      overflow: auto;
-      padding: 12px;
-      border-radius: 6px;
-      background: #101712;
-      color: #dceee1;
-      font-size: 12px;
-      line-height: 18px;
-      white-space: pre-wrap;
+    .empty {
+      padding: 42px 18px;
+      text-align: center;
+      color: #667085;
     }
-
-    @media (max-width: 840px) {
-      .grid {
+    .pager {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      padding: 14px 16px;
+      color: #667085;
+      font-size: 13px;
+    }
+    .pager-actions {
+      display: flex;
+      gap: 8px;
+    }
+    @media (max-width: 920px) {
+      .topbar,
+      .toolbar,
+      .ship-form {
         grid-template-columns: 1fr;
-      }
-
-      .row {
-        grid-template-columns: 1fr;
-      }
-
-      .topbar {
-        display: block;
       }
     }
   </style>
@@ -265,95 +258,83 @@
   <main class="shell">
     <header class="topbar">
       <div>
-        <h1>订单发货管理</h1>
-        <p class="muted">录入物流后会先同步微信发货信息，成功后再更新本地订单状态与物流轨迹。</p>
+        <h1>订单管理</h1>
+        <p class="muted">进入页面自动加载订单。待发货订单可在列表中直接展开并同步微信发货信息。</p>
       </div>
-      <div class="field" style="min-width:260px;margin-bottom:0">
-        <label for="adminToken">管理 Token（如已配置 ADMIN_TOKEN）</label>
-        <input id="adminToken" type="password" autocomplete="off" placeholder="可留空">
+      <div>
+        <label for="adminToken">管理 Token</label>
+        <input id="adminToken" type="password" autocomplete="off" placeholder="未配置 ADMIN_TOKEN 可留空">
       </div>
     </header>
 
     <div id="notice" class="notice"></div>
 
-    <section class="grid">
+    <section class="toolbar">
       <div>
-        <section class="panel">
-          <h2 class="panel-title">查找订单</h2>
-          <div class="row">
-            <div class="field">
-              <label for="orderNo">订单号</label>
-              <input id="orderNo" value="ORD1779679337988cpvs" placeholder="ORD...">
-            </div>
-            <div class="field">
-              <label>&nbsp;</label>
-              <button id="loadOrder" type="button">查询订单</button>
-            </div>
-          </div>
-        </section>
-
-        <section class="panel">
-          <h2 class="panel-title">订单信息</h2>
-          <dl id="orderSummary" class="kv">
-            <dt>状态</dt><dd>未查询</dd>
-          </dl>
-          <div id="goodsList" class="goods"></div>
-        </section>
-
-        <section class="panel">
-          <h2 class="panel-title">接口返回</h2>
-          <pre id="rawResult" class="raw">等待操作</pre>
-        </section>
+        <label for="keyword">搜索订单号 / 微信交易单号</label>
+        <input id="keyword" placeholder="输入关键字后回车或点刷新">
       </div>
+      <div>
+        <label for="statusFilter">订单状态</label>
+        <select id="statusFilter">
+          <option value="-1">全部订单</option>
+          <option value="5">待付款</option>
+          <option value="10">待发货</option>
+          <option value="40">待收货</option>
+          <option value="50">已完成</option>
+        </select>
+      </div>
+      <div>
+        <label for="pageSize">每页数量</label>
+        <select id="pageSize">
+          <option value="all" selected>全部</option>
+          <option value="20">20</option>
+          <option value="50">50</option>
+          <option value="100">100</option>
+        </select>
+      </div>
+      <button id="refreshOrders" type="button">刷新订单</button>
+    </section>
 
-      <aside>
-        <section class="panel">
-          <h2 class="panel-title">同步发货</h2>
-          <div class="field">
-            <label for="trackingNo">物流单号</label>
-            <input id="trackingNo" placeholder="请输入真实快递单号">
-          </div>
-          <div class="field">
-            <label for="expressCompany">微信快递公司编码</label>
-            <select id="expressCompany">
-              <option value="SF">SF - 顺丰速运</option>
-              <option value="YTO">YTO - 圆通速递</option>
-              <option value="ZTO">ZTO - 中通快递</option>
-              <option value="STO">STO - 申通快递</option>
-              <option value="YD">YD - 韵达快递</option>
-              <option value="JD">JD - 京东物流</option>
-              <option value="EMS">EMS - EMS</option>
-              <option value="DBL">DBL - 德邦快递</option>
-              <option value="JTSD">JTSD - 极兔速递</option>
-            </select>
-          </div>
-          <div class="field">
-            <label for="expressCompanyName">本地显示名称</label>
-            <input id="expressCompanyName" value="顺丰速运">
-          </div>
-          <div class="field">
-            <label for="receiverContact">收件人手机号</label>
-            <input id="receiverContact" placeholder="默认取订单地址手机号">
-          </div>
-          <div class="field">
-            <label for="itemDesc">商品描述</label>
-            <input id="itemDesc" placeholder="默认取订单商品名">
-          </div>
-          <div class="field checkbox-row">
-            <input id="localOnly" type="checkbox">
-            <span>仅更新本地订单（调试用，不同步微信）</span>
-          </div>
-          <div class="actions">
-            <button id="shipOrder" type="button">同步发货</button>
-            <button id="fillDemo" class="secondary" type="button">填充示例单号</button>
-          </div>
-        </section>
-      </aside>
+    <div id="stats" class="stats"></div>
+
+    <section class="panel">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th style="width:210px">订单</th>
+              <th>商品</th>
+              <th style="width:120px">金额</th>
+              <th style="width:130px">状态</th>
+              <th style="width:210px">收件信息</th>
+              <th style="width:170px">物流</th>
+              <th style="width:190px">操作</th>
+            </tr>
+          </thead>
+          <tbody id="ordersBody">
+            <tr><td colspan="7" class="empty">正在加载订单...</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="pager">
+        <span id="pagerInfo">-</span>
+        <div class="pager-actions">
+          <button id="prevPage" class="subtle" type="button">上一页</button>
+          <button id="nextPage" class="subtle" type="button">下一页</button>
+        </div>
+      </div>
     </section>
   </main>
 
   <script>
-    const state = { order: null };
+    const state = {
+      orders: [],
+      total: 0,
+      pageNum: 1,
+      expandedOrderNo: '',
+      loading: false,
+    };
     const $ = (id) => document.getElementById(id);
 
     const expressNameMap = {
@@ -381,46 +362,17 @@
       notice.className = `notice show${isError ? ' error' : ''}`;
     }
 
-    function setRaw(data) {
-      $('rawResult').textContent = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
-    }
-
     function money(fen) {
       return `¥${(Number(fen || 0) / 100).toFixed(2)}`;
     }
 
-    function renderOrder(order) {
-      state.order = order;
-      const logistics = order.logisticsVO || {};
-      const payment = order.paymentVO || {};
-      $('orderSummary').innerHTML = `
-        <dt>订单号</dt><dd>${order.orderNo || '-'}</dd>
-        <dt>订单状态</dt><dd>${order.orderStatusName || '-'}（${order.orderStatus || '-'}）</dd>
-        <dt>微信支付单号</dt><dd>${payment.transactionId || payment.channelTrxNo || '-'}</dd>
-        <dt>付款人 openid</dt><dd>${order.uid || '-'}</dd>
-        <dt>实付金额</dt><dd>${money(order.paymentAmount)}</dd>
-        <dt>收件人</dt><dd>${logistics.receiverName || '-'} ${logistics.receiverPhone || ''}</dd>
-        <dt>收货地址</dt><dd>${[
-          logistics.receiverProvince,
-          logistics.receiverCity,
-          logistics.receiverCountry,
-          logistics.receiverArea,
-          logistics.receiverAddress,
-        ].filter(Boolean).join(' ') || '-'}</dd>
-        <dt>物流</dt><dd>${logistics.logisticsCompanyName || '-'} ${logistics.logisticsNo || ''}</dd>
-      `;
-
-      $('receiverContact').value = logistics.receiverPhone || '';
-      $('itemDesc').value = (order.orderItemVOs || []).map((item) => item.goodsName).filter(Boolean).join('、').slice(0, 120);
-      $('goodsList').innerHTML = (order.orderItemVOs || []).map((item) => `
-        <article class="goods-item">
-          <img class="thumb" src="${item.thumb || item.goodsPictureUrl || ''}" alt="">
-          <div>
-            <div class="goods-title">${item.goodsName || '商品'}</div>
-            <div class="goods-sub">SKU：${item.skuId || '-'}　数量：${item.buyQuantity || 1}　金额：${money(item.itemPaymentAmount || item.actualPrice)}</div>
-          </div>
-        </article>
-      `).join('');
+    function escapeHtml(value) {
+      return String(value ?? '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#39;');
     }
 
     async function requestJson(url, options = {}) {
@@ -432,73 +384,282 @@
       return json;
     }
 
-    async function loadOrder() {
-      const orderNo = $('orderNo').value.trim();
-      if (!orderNo) {
-        showNotice('请先填写订单号', true);
+    function orderStatusClass(order) {
+      if (order.rightsNo) return 'after-sale';
+      if (Number(order.orderStatus) === 10) return 'pending';
+      if (Number(order.orderStatus) === 40) return 'shipped';
+      if (Number(order.orderStatus) === 50) return 'done';
+      return '';
+    }
+
+    function goodsSummary(order) {
+      const goods = order.orderItemVOs || [];
+      if (!goods.length) return '<span class="small">无商品信息</span>';
+      return goods.map((item) => `
+        <div class="goods-title">${escapeHtml(item.goodsName || '商品')}</div>
+        <div class="goods-sub">SKU：${escapeHtml(item.skuId || '-')} / 数量：${escapeHtml(item.buyQuantity || 1)}</div>
+      `).join('');
+    }
+
+    function renderStats(tabCounts = []) {
+      const labels = {
+        '-1': '全部',
+        5: '待付款',
+        10: '待发货',
+        40: '待收货',
+        50: '已完成',
+      };
+      const current = $('statusFilter').value;
+      $('stats').innerHTML = tabCounts.map((item) => `
+        <button class="stat ${String(item.tabType) === current ? 'active' : ''}" data-status="${item.tabType}" type="button">
+          ${labels[item.tabType] || item.tabType} ${item.orderNum}
+        </button>
+      `).join('');
+    }
+
+    function renderOrders() {
+      const keyword = $('keyword').value.trim().toLowerCase();
+      const orders = keyword
+        ? state.orders.filter((order) => {
+            const payment = order.paymentVO || {};
+            return [order.orderNo, payment.transactionId, payment.channelTrxNo]
+              .filter(Boolean)
+              .some((value) => String(value).toLowerCase().includes(keyword));
+          })
+        : state.orders;
+
+      if (!orders.length) {
+        $('ordersBody').innerHTML = '<tr><td colspan="7" class="empty">没有找到订单</td></tr>';
         return;
       }
 
-      $('loadOrder').disabled = true;
+      $('ordersBody').innerHTML = orders.map((order) => {
+        const logistics = order.logisticsVO || {};
+        const payment = order.paymentVO || {};
+        const isPendingDelivery = Number(order.orderStatus) === 10;
+        const isExpanded = state.expandedOrderNo === order.orderNo;
+        const receiver = [logistics.receiverName, logistics.receiverPhone].filter(Boolean).join(' ');
+        const address = [
+          logistics.receiverProvince,
+          logistics.receiverCity,
+          logistics.receiverCountry,
+          logistics.receiverArea,
+          logistics.receiverAddress,
+        ].filter(Boolean).join(' ');
+        return `
+          <tr>
+            <td>
+              <div class="order-no">${escapeHtml(order.orderNo)}</div>
+              <div class="small">ID：${escapeHtml(order.orderId || '-')}</div>
+              <div class="small">交易单：${escapeHtml(payment.transactionId || payment.channelTrxNo || '-')}</div>
+            </td>
+            <td class="goods">${goodsSummary(order)}</td>
+            <td>
+              <strong>${money(order.paymentAmount || order.totalAmount)}</strong>
+              <div class="small">商品：${money(order.goodsAmount || order.totalAmount)}</div>
+            </td>
+            <td>
+              <span class="badge ${orderStatusClass(order)}">${escapeHtml(order.orderStatusName || '-')}</span>
+              ${order.rightsNo ? `<div class="small">售后：${escapeHtml(order.rightsNo)}</div>` : ''}
+            </td>
+            <td>
+              <div>${escapeHtml(receiver || '-')}</div>
+              <div class="small">${escapeHtml(address || '-')}</div>
+            </td>
+            <td>
+              <div>${escapeHtml(logistics.logisticsCompanyName || '-')}</div>
+              <div class="small">${escapeHtml(logistics.logisticsNo || '')}</div>
+            </td>
+            <td>
+              <div class="row-actions">
+                ${isPendingDelivery ? `<button type="button" data-action="toggle-ship" data-order-no="${escapeHtml(order.orderNo)}">${isExpanded ? '收起发货' : '同步发货'}</button>` : ''}
+                <button type="button" class="secondary" data-action="view" data-order-no="${escapeHtml(order.orderNo)}">查看</button>
+              </div>
+            </td>
+          </tr>
+          <tr class="ship-row ${isExpanded ? 'active' : ''}">
+            <td colspan="7">
+              ${renderShipForm(order)}
+            </td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    function renderShipForm(order) {
+      const logistics = order.logisticsVO || {};
+      const itemDesc = (order.orderItemVOs || []).map((item) => item.goodsName).filter(Boolean).join('、').slice(0, 120);
+      return `
+        <div class="ship-form" data-ship-form="${escapeHtml(order.orderNo)}">
+          <div>
+            <label>物流单号</label>
+            <input data-field="trackingNo" placeholder="请输入真实快递单号" value="${escapeHtml(logistics.logisticsNo || '')}">
+          </div>
+          <div>
+            <label>快递公司</label>
+            <select data-field="expressCompany">
+              ${Object.keys(expressNameMap).map((code) => `
+                <option value="${code}" ${code === (logistics.logisticsCompanyCode || 'SF') ? 'selected' : ''}>${code}</option>
+              `).join('')}
+            </select>
+          </div>
+          <div>
+            <label>显示名称</label>
+            <input data-field="expressCompanyName" value="${escapeHtml(logistics.logisticsCompanyName || '顺丰速运')}">
+          </div>
+          <div>
+            <label>收件手机号</label>
+            <input data-field="receiverContact" value="${escapeHtml(logistics.receiverPhone || '')}">
+          </div>
+          <div>
+            <label>商品描述</label>
+            <input data-field="itemDesc" value="${escapeHtml(itemDesc)}">
+          </div>
+          <div>
+            <label>&nbsp;</label>
+            <div class="row-actions">
+              <button type="button" data-action="submit-ship" data-order-no="${escapeHtml(order.orderNo)}">确认同步</button>
+              <label class="checkbox-line"><input data-field="localOnly" type="checkbox">仅本地</label>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function updatePager() {
+      if ($('pageSize').value === 'all') {
+        $('pagerInfo').textContent = `共 ${state.total} 单，当前显示全部`;
+        $('prevPage').disabled = true;
+        $('nextPage').disabled = true;
+        return;
+      }
+
+      const pageSize = Number($('pageSize').value || 50);
+      const start = state.total ? (state.pageNum - 1) * pageSize + 1 : 0;
+      const end = Math.min(state.pageNum * pageSize, state.total);
+      $('pagerInfo').textContent = `第 ${state.pageNum} 页，显示 ${start}-${end} / 共 ${state.total} 单`;
+      $('prevPage').disabled = state.pageNum <= 1 || state.loading;
+      $('nextPage').disabled = state.pageNum * pageSize >= state.total || state.loading;
+    }
+
+    async function loadOrders(pageNum = state.pageNum) {
+      state.loading = true;
+      $('refreshOrders').disabled = true;
+      $('ordersBody').innerHTML = '<tr><td colspan="7" class="empty">正在加载订单...</td></tr>';
+      updatePager();
       try {
-        const json = await requestJson(`/api/admin/order/${encodeURIComponent(orderNo)}`, {
+        const params = new URLSearchParams({
+          pageNum: String(pageNum),
+          pageSize: $('pageSize').value,
+          orderStatus: $('statusFilter').value,
+        });
+        const json = await requestJson(`/api/admin/orders?${params.toString()}`, {
           headers: headers(),
         });
-        renderOrder(json.data);
-        setRaw(json);
-        showNotice('订单已加载');
+        state.orders = json.data.orders || [];
+        state.total = Number(json.data.total || 0);
+        state.pageNum = Number(json.data.pageNum || pageNum);
+        state.expandedOrderNo = '';
+        renderStats(json.data.tabCounts || []);
+        renderOrders();
+        showNotice('订单列表已刷新');
       } catch (err) {
+        state.orders = [];
+        state.total = 0;
+        $('ordersBody').innerHTML = `<tr><td colspan="7" class="empty">${escapeHtml(err.message)}</td></tr>`;
         showNotice(err.message, true);
-        setRaw(err.message);
       } finally {
-        $('loadOrder').disabled = false;
+        state.loading = false;
+        $('refreshOrders').disabled = false;
+        updatePager();
       }
     }
 
-    async function shipOrder() {
+    async function shipOrder(orderNo) {
+      const form = Array.from(document.querySelectorAll('[data-ship-form]'))
+        .find((node) => node.dataset.shipForm === orderNo);
+      if (!form) return;
+
+      const read = (field) => form.querySelector(`[data-field="${field}"]`);
       const payload = {
-        orderNo: $('orderNo').value.trim(),
-        trackingNo: $('trackingNo').value.trim(),
-        expressCompany: $('expressCompany').value.trim(),
-        expressCompanyName: $('expressCompanyName').value.trim(),
-        receiverContact: $('receiverContact').value.trim(),
-        itemDesc: $('itemDesc').value.trim(),
-        localOnly: $('localOnly').checked,
+        orderNo,
+        trackingNo: read('trackingNo').value.trim(),
+        expressCompany: read('expressCompany').value.trim(),
+        expressCompanyName: read('expressCompanyName').value.trim(),
+        receiverContact: read('receiverContact').value.trim(),
+        itemDesc: read('itemDesc').value.trim(),
+        localOnly: read('localOnly').checked,
       };
 
-      if (!payload.orderNo || !payload.trackingNo || !payload.expressCompany) {
-        showNotice('订单号、物流单号、快递公司编码都必填', true);
+      if (!payload.trackingNo || !payload.expressCompany) {
+        showNotice('请填写物流单号和快递公司', true);
         return;
       }
 
-      $('shipOrder').disabled = true;
+      const button = form.querySelector('[data-action="submit-ship"]');
+      button.disabled = true;
       try {
         const json = await requestJson('/api/admin/order/ship', {
           method: 'POST',
           headers: headers(),
           body: JSON.stringify(payload),
         });
-        renderOrder(json.data.order);
-        setRaw(json);
-        showNotice(json.message || '发货成功');
+        showNotice(json.message || '发货同步成功');
+        await loadOrders(state.pageNum);
       } catch (err) {
         showNotice(err.message, true);
-        setRaw(err.message);
       } finally {
-        $('shipOrder').disabled = false;
+        button.disabled = false;
       }
     }
 
-    $('expressCompany').addEventListener('change', () => {
-      $('expressCompanyName').value = expressNameMap[$('expressCompany').value] || $('expressCompany').value;
-    });
-    $('loadOrder').addEventListener('click', loadOrder);
-    $('shipOrder').addEventListener('click', shipOrder);
-    $('fillDemo').addEventListener('click', () => {
-      $('trackingNo').value = `SF${Date.now()}`;
+    $('ordersBody').addEventListener('click', (event) => {
+      const target = event.target.closest('[data-action]');
+      if (!target) return;
+      const action = target.dataset.action;
+      const orderNo = target.dataset.orderNo;
+
+      if (action === 'toggle-ship') {
+        state.expandedOrderNo = state.expandedOrderNo === orderNo ? '' : orderNo;
+        renderOrders();
+      }
+      if (action === 'submit-ship') {
+        shipOrder(orderNo);
+      }
+      if (action === 'view') {
+        state.expandedOrderNo = '';
+        window.open(`/api/admin/order/${encodeURIComponent(orderNo)}${$('adminToken').value ? `?token=${encodeURIComponent($('adminToken').value.trim())}` : ''}`, '_blank');
+      }
     });
 
-    loadOrder();
+    $('ordersBody').addEventListener('change', (event) => {
+      const select = event.target.closest('[data-field="expressCompany"]');
+      if (!select) return;
+      const form = select.closest('[data-ship-form]');
+      const nameInput = form.querySelector('[data-field="expressCompanyName"]');
+      nameInput.value = expressNameMap[select.value] || select.value;
+    });
+
+    $('stats').addEventListener('click', (event) => {
+      const target = event.target.closest('[data-status]');
+      if (!target) return;
+      $('statusFilter').value = target.dataset.status;
+      state.pageNum = 1;
+      loadOrders(1);
+    });
+
+    $('keyword').addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') renderOrders();
+    });
+    $('keyword').addEventListener('input', renderOrders);
+    $('statusFilter').addEventListener('change', () => loadOrders(1));
+    $('pageSize').addEventListener('change', () => loadOrders(1));
+    $('refreshOrders').addEventListener('click', () => loadOrders(state.pageNum));
+    $('prevPage').addEventListener('click', () => loadOrders(Math.max(1, state.pageNum - 1)));
+    $('nextPage').addEventListener('click', () => loadOrders(state.pageNum + 1));
+    $('adminToken').addEventListener('change', () => loadOrders(1));
+
+    loadOrders(1);
   </script>
 </body>
 </html>

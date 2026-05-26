@@ -1953,6 +1953,53 @@ app.get('/api/admin/order/:id', adminAuth, async (req, res) => {
   }
 });
 
+app.get('/api/admin/orders', adminAuth, async (req, res) => {
+  try {
+    const pageNum = Math.max(Number(req.query.pageNum) || 1, 1);
+    const showAll = req.query.pageSize === 'all';
+    const pageSize = showAll ? undefined : Math.max(Number(req.query.pageSize) || 50, 1);
+    const orderStatus = req.query.orderStatus;
+    const where = {};
+
+    if (orderStatus !== undefined && orderStatus !== '' && Number(orderStatus) !== -1) {
+      where.orderStatus = Number(orderStatus);
+    }
+
+    const findOptions = {
+      where,
+      order: [['createdAt', 'DESC']],
+    };
+    if (!showAll) {
+      findOptions.offset = (pageNum - 1) * pageSize;
+      findOptions.limit = pageSize;
+    }
+
+    const { rows, count } = await Order.findAndCountAll(findOptions);
+    const afterSaleMap = await fetchAfterSalesForOrders(rows.map((order) => order.orderNo));
+    const statuses = [-1, 5, 10, 40, 50];
+    const tabCounts = await Promise.all(
+      statuses.map(async (status) => ({
+        tabType: status,
+        orderNum: status === -1 ? await Order.count() : await Order.count({ where: { orderStatus: status } }),
+      })),
+    );
+
+    res.send({
+      code: 0,
+      data: {
+        orders: rows.map((order) => formatOrderForMiniProgram(order, afterSaleMap[order.orderNo] || [])),
+        total: count,
+        pageNum,
+        pageSize: showAll ? 'all' : pageSize,
+        tabCounts,
+      },
+    });
+  } catch (err) {
+    console.error('获取管理订单列表失败:', err);
+    res.send({ code: -1, message: err.message });
+  }
+});
+
 app.post('/api/admin/order/ship', adminAuth, async (req, res) => {
   try {
     const {
