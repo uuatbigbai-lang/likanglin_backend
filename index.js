@@ -571,6 +571,47 @@ const buildWechatShippingPayload = ({ order, trackingNo, expressCompany, itemDes
   };
 };
 
+const getWechatPublicBaseUrl = () => {
+  const explicit = process.env.PUBLIC_BASE_URL || process.env.WECHAT_PUBLIC_BASE_URL || process.env.BASE_URL || '';
+  if (explicit) return explicit.replace(/\/$/, '');
+  if (wxPayConfig.notifyUrl) {
+    try {
+      const url = new URL(wxPayConfig.notifyUrl);
+      return `${url.protocol}//${url.host}`;
+    } catch (err) {
+      return '';
+    }
+  }
+  return '';
+};
+
+const WECHAT_ORDER_NOTIFY_URL =
+  process.env.WECHAT_ORDER_NOTIFY_URL ||
+  (getWechatPublicBaseUrl() ? `${getWechatPublicBaseUrl()}/api/order/wechat/notify` : '');
+
+const WECHAT_ORDER_MSG_JUMP_PATH =
+  process.env.WECHAT_ORDER_MSG_JUMP_PATH ||
+  'pages/order/order-detail/index?id=${商品订单号}&channel=wechat';
+
+const setWechatOrderMsgJumpPath = async (path = WECHAT_ORDER_MSG_JUMP_PATH) => {
+  const accessToken = await getWechatAccessToken();
+  if (!accessToken) {
+    throw new Error('未配置 WECHAT_APP_ID/WECHAT_APP_SECRET，无法设置微信订单消息跳转路径');
+  }
+
+  const result = await requestWechatJson({
+    method: 'POST',
+    path: `/wxa/sec/order/set_msg_jump_path?access_token=${encodeURIComponent(accessToken)}`,
+    data: { path },
+  });
+
+  if (result.errcode) {
+    throw new Error(result.errmsg || `微信订单消息跳转路径设置失败：${result.errcode}`);
+  }
+
+  return result;
+};
+
 const uploadWechatShippingInfo = async (payload) => {
   const accessToken = await getWechatAccessToken();
   if (!accessToken) {
@@ -588,6 +629,58 @@ const uploadWechatShippingInfo = async (payload) => {
   }
 
   return result;
+};
+
+const buildWechatOrderQueryPayload = (order) => {
+  const data = typeof order.toJSON === 'function' ? order.toJSON() : order;
+  if (data.transactionId) {
+    return { transaction_id: data.transactionId };
+  }
+
+  return {
+    merchant_id: wxPayConfig.mchId,
+    merchant_trade_no: data.orderNo,
+  };
+};
+
+const getWechatOrder = async (order) => {
+  const accessToken = await getWechatAccessToken();
+  if (!accessToken) {
+    throw new Error('未配置 WECHAT_APP_ID/WECHAT_APP_SECRET，无法查询微信订单状态');
+  }
+
+  const result = await requestWechatJson({
+    method: 'POST',
+    path: `/wxa/sec/order/get_order?access_token=${encodeURIComponent(accessToken)}`,
+    data: buildWechatOrderQueryPayload(order),
+  });
+
+  if (result.errcode) {
+    throw new Error(result.errmsg || `微信订单状态查询失败：${result.errcode}`);
+  }
+
+  return result;
+};
+
+const getWechatOrderState = (wechatOrderResult = {}) => {
+  const order = wechatOrderResult.order || wechatOrderResult;
+  return Number(order.order_state || order.orderState || 0);
+};
+
+const syncOrderFromWechatOrderState = async (order, source = '主动同步') => {
+  const wechatOrder = await getWechatOrder(order);
+  const orderState = getWechatOrderState(wechatOrder);
+
+  if ([3, 4].includes(orderState) && Number(order.orderStatus) !== 50) {
+    await order.update({
+      orderStatus: 50,
+      orderStatusName: '交易完成',
+      trajectoryVos: mergeTrajectory(order.trajectoryVos || [], 300003),
+    });
+    console.log(`✅ 微信确认收货已同步本地订单(${source}):`, order.orderNo, orderState);
+  }
+
+  return { wechatOrder, orderState };
 };
 
 const buildWechatTraceWaybillPayload = (order) => {
@@ -1913,6 +2006,14 @@ app.get('/api/order/detail/:id', async (req, res) => {
       return res.send({ code: -1, message: '订单不存在' });
     }
 
+    if (Number(order.orderStatus) === 40) {
+      try {
+        await syncOrderFromWechatOrderState(order, '订单详情查询');
+      } catch (syncErr) {
+        console.warn('微信订单状态同步跳过:', order.orderNo, syncErr.message);
+      }
+    }
+
     const afterSales = await fetchAfterSalesForOrder(order.orderNo);
     res.send({ code: 0, data: formatOrderForMiniProgram(order, afterSales) });
   } catch (err) {
@@ -2028,6 +2129,93 @@ app.post('/api/order/logistics/waybill-token', async (req, res) => {
   }
 });
 
+const findOrderNoFromWechatNotify = (payload = {}) => {
+  const directKeys = [
+    'out_trade_no',
+    'merchant_trade_no',
+    'order_no',
+    'orderNo',
+    'order_id',
+    'orderId',
+  ];
+
+  for (const key of directKeys) {
+    if (payload[key]) return String(payload[key]);
+  }
+
+  for (const value of Object.values(payload)) {
+    if (value && typeof value === 'object') {
+      const nested = findOrderNoFromWechatNotify(value);
+      if (nested) return nested;
+    }
+  }
+
+  return '';
+};
+
+app.post('/api/order/wechat/notify', async (req, res) => {
+  try {
+    if (!wxPayConfig.apiV3Key && req.body && req.body.resource) {
+      return res.status(500).send({ code: 'FAIL', message: 'WECHAT_PAY_API_V3_KEY 未配置' });
+    }
+
+    const notifyBody = req.body || {};
+    const payload = notifyBody.resource ? decryptNotifyResource(notifyBody.resource) : notifyBody;
+    const orderNo = findOrderNoFromWechatNotify(payload);
+    if (!orderNo) {
+      console.warn('微信订单通知未识别订单号:', JSON.stringify(payload));
+      return res.send({ code: 'SUCCESS', message: '忽略无订单号通知' });
+    }
+
+    const order = await Order.findOne({ where: { orderNo } });
+    if (!order) {
+      console.warn('微信订单通知对应本地订单不存在:', orderNo);
+      return res.send({ code: 'SUCCESS', message: '本地订单不存在，已忽略' });
+    }
+
+    await syncOrderFromWechatOrderState(order, '微信通知');
+    res.send({ code: 'SUCCESS', message: '成功' });
+  } catch (err) {
+    console.error('微信订单通知处理失败:', err);
+    res.status(500).send({ code: 'FAIL', message: err.message });
+  }
+});
+
+app.post('/api/order/wechat/sync', async (req, res) => {
+  try {
+    const { orderNo, orderId } = req.body || {};
+    const conditions = [];
+    if (orderNo) conditions.push({ orderNo });
+    if (orderId && /^\d+$/.test(String(orderId))) conditions.push({ id: Number(orderId) });
+    if (!conditions.length) return res.send({ code: -1, message: '缺少订单标识' });
+
+    const order = await Order.findOne({ where: { [Op.or]: conditions } });
+    if (!order) return res.send({ code: -1, message: '订单不存在' });
+
+    const syncResult = await syncOrderFromWechatOrderState(order, '手动同步');
+    const afterSales = await fetchAfterSalesForOrder(order.orderNo);
+    res.send({
+      code: 0,
+      data: {
+        ...syncResult,
+        order: formatOrderForMiniProgram(order, afterSales),
+      },
+    });
+  } catch (err) {
+    console.error('微信订单状态同步失败:', err);
+    res.send({ code: -1, message: err.message });
+  }
+});
+
+app.post('/api/order/wechat/msg-jump-path', adminAuth, async (req, res) => {
+  try {
+    const result = await setWechatOrderMsgJumpPath(req.body?.path || WECHAT_ORDER_MSG_JUMP_PATH);
+    res.send({ code: 0, data: { path: req.body?.path || WECHAT_ORDER_MSG_JUMP_PATH, result } });
+  } catch (err) {
+    res.send({ code: -1, message: err.message });
+  }
+});
+
 app.get('/api/admin/order/:id', adminAuth, async (req, res) => {
   try {
     const id = req.params.id;
@@ -2125,6 +2313,11 @@ app.post('/api/admin/order/ship', adminAuth, async (req, res) => {
     let wechatResult = { skipped: true, errmsg: '已选择仅更新本地订单' };
     if (!localOnly) {
       wechatResult = await uploadWechatShippingInfo(shippingPayload);
+      try {
+        await setWechatOrderMsgJumpPath();
+      } catch (jumpErr) {
+        console.warn('微信订单消息跳转路径设置失败:', jumpErr.message);
+      }
     }
 
     const trajectoryVos = mergeTrajectory(order.trajectoryVos || [], 200003);
