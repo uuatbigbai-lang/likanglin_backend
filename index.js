@@ -590,6 +590,54 @@ const uploadWechatShippingInfo = async (payload) => {
   return result;
 };
 
+const buildWechatTraceWaybillPayload = (order) => {
+  const data = typeof order.toJSON === 'function' ? order.toJSON() : order;
+  const address = data.userAddress || {};
+  const goodsList = Array.isArray(data.goodsList) ? data.goodsList : [];
+
+  return {
+    openid: data.openid || '',
+    waybill_id: data.logisticsNo || '',
+    delivery_id: data.logisticsCompanyCode || '',
+    receiver_phone: address.phone || address.phoneNumber || '',
+    goods_info: {
+      detail_list: goodsList.map((goods) => ({
+        goods_name: goods.goodsName || goods.title || '商品',
+        goods_img_url: goods.thumb || goods.image || goods.primaryImage || '',
+      })),
+    },
+  };
+};
+
+const traceWechatWaybill = async (order) => {
+  const payload = buildWechatTraceWaybillPayload(order);
+  if (!payload.openid) throw new Error('订单缺少 openid，无法获取微信物流凭证');
+  if (!payload.waybill_id) throw new Error('订单缺少物流单号，无法获取微信物流凭证');
+  if (!payload.delivery_id) throw new Error('订单缺少快递公司编码，无法获取微信物流凭证');
+  if (!payload.receiver_phone) throw new Error('订单缺少收件人手机号，无法获取微信物流凭证');
+
+  const accessToken = await getWechatAccessToken();
+  if (!accessToken) {
+    throw new Error('未配置 WECHAT_APP_ID/WECHAT_APP_SECRET，无法获取微信物流凭证');
+  }
+
+  const result = await requestWechatJson({
+    method: 'POST',
+    path: `/cgi-bin/express/delivery/open_msg/trace_waybill?access_token=${encodeURIComponent(accessToken)}`,
+    data: payload,
+  });
+
+  if (result.errcode) {
+    throw new Error(result.errmsg || `微信物流凭证获取失败：${result.errcode}`);
+  }
+
+  return {
+    payload,
+    result,
+    waybillToken: result.waybill_token || result.waybillToken || '',
+  };
+};
+
 const SERVICE_STATUS = {
   PENDING_VERIFY: 100,
   VERIFIED: 110,
@@ -1929,6 +1977,53 @@ app.post('/api/order/logistics/test-update', async (req, res) => {
     });
   } catch (err) {
     console.error('测试物流状态更新失败:', err);
+    res.send({ code: -1, message: err.message });
+  }
+});
+
+app.post('/api/order/logistics/waybill-token', async (req, res) => {
+  try {
+    const { orderNo, orderId } = req.body || {};
+    const conditions = [];
+    if (orderNo) conditions.push({ orderNo });
+    if (orderId && /^\d+$/.test(String(orderId))) conditions.push({ id: Number(orderId) });
+    if (!conditions.length) return res.send({ code: -1, message: '缺少订单标识' });
+
+    const order = await Order.findOne({ where: { [Op.or]: conditions } });
+    if (!order) return res.send({ code: -1, message: '订单不存在' });
+
+    if (order.waybillToken) {
+      return res.send({
+        code: 0,
+        data: {
+          waybillToken: order.waybillToken,
+          order: formatOrderForMiniProgram(order, await fetchAfterSalesForOrder(order.orderNo)),
+        },
+      });
+    }
+
+    const traced = await traceWechatWaybill(order);
+    if (!traced.waybillToken) {
+      return res.send({
+        code: -1,
+        message: '微信未返回物流查询凭证',
+        data: traced.result,
+      });
+    }
+
+    await order.update({ waybillToken: traced.waybillToken });
+    const afterSales = await fetchAfterSalesForOrder(order.orderNo);
+
+    res.send({
+      code: 0,
+      data: {
+        waybillToken: traced.waybillToken,
+        wechatResult: traced.result,
+        order: formatOrderForMiniProgram(order, afterSales),
+      },
+    });
+  } catch (err) {
+    console.error('获取微信物流凭证失败:', err);
     res.send({ code: -1, message: err.message });
   }
 });
