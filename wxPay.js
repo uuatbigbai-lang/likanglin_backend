@@ -162,11 +162,19 @@ const requestWechatPay = (method, requestPath, body) => {
           data += chunk;
         });
         res.on('end', () => {
-          const json = data ? JSON.parse(data) : {};
+          let json = {};
+          try {
+            json = data ? JSON.parse(data) : {};
+          } catch (err) {
+            json = { message: data || err.message };
+          }
           if (res.statusCode >= 200 && res.statusCode < 300) {
             resolve(json);
           } else {
-            reject(new Error(json.message || json.code || `微信支付请求失败：${res.statusCode}`));
+            const error = new Error(json.message || json.code || `微信支付请求失败：${res.statusCode}`);
+            error.statusCode = res.statusCode;
+            error.wechatResult = json;
+            reject(error);
           }
         });
       },
@@ -216,6 +224,37 @@ const createWechatPrepay = async ({ orderNo, openid, amount, description }) => {
   };
 };
 
+const isWechatPayTransactionId = (value) => /^420\d{25,}$/.test(String(value || '').trim());
+
+const createWechatRefund = async ({ orderNo, transactionId, totalAmount, refundAmount, reason }) => {
+  const outTradeNo = String(orderNo || '');
+  const refund = getPayAmount(refundAmount);
+  const total = getPayAmount(totalAmount);
+  const outRefundNo = `RF${outTradeNo}${Date.now()}`.slice(0, 64);
+  const payload = {
+    out_refund_no: outRefundNo,
+    reason: String(reason || '订单退款').slice(0, 80),
+    amount: {
+      refund,
+      total,
+      currency: 'CNY',
+    },
+  };
+
+  if (isWechatPayTransactionId(transactionId)) {
+    payload.transaction_id = String(transactionId).trim();
+  } else {
+    payload.out_trade_no = outTradeNo;
+  }
+
+  const result = await requestWechatPay('POST', '/v3/refund/domestic/refunds', payload);
+  return {
+    outRefundNo,
+    payload,
+    result,
+  };
+};
+
 const getOpenidByCode = (code) => {
   if (!code || !wxPayConfig.appId || !wxPayConfig.appSecret) {
     return Promise.resolve('');
@@ -258,6 +297,7 @@ module.exports = {
   isWxPayConfigured,
   getPayAmount,
   createWechatPrepay,
+  createWechatRefund,
   getOpenidByCode,
   decryptNotifyResource,
 };

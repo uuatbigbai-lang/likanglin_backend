@@ -506,6 +506,67 @@ const AdminWhitelist = sequelize.define("AdminWhitelist", {
   },
 });
 
+const CouponTemplate = sequelize.define("CouponTemplate", {
+  templateType: {
+    type: DataTypes.STRING(64),
+    allowNull: false,
+    unique: true,
+    comment: "优惠券模板唯一标识",
+  },
+  title: {
+    type: DataTypes.STRING(80),
+    allowNull: false,
+    comment: "优惠券标题",
+  },
+  ruleType: {
+    type: DataTypes.STRING(32),
+    allowNull: false,
+    defaultValue: "discount",
+    comment: "规则类型 discount/amount/buy_x_get_y",
+  },
+  value: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    defaultValue: 0,
+    comment: "折扣值/减免金额/赠送件数，折扣券如9表示9折",
+  },
+  thresholdAmount: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    defaultValue: 0,
+    comment: "最低订单金额门槛（分）",
+  },
+  minQuantity: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    defaultValue: 0,
+    comment: "最低商品件数门槛",
+  },
+  desc: {
+    type: DataTypes.STRING(300),
+    allowNull: true,
+    defaultValue: "",
+    comment: "规则说明",
+  },
+  status: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    defaultValue: 1,
+    comment: "状态：1启用 0停用",
+  },
+  sort: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    defaultValue: 0,
+    comment: "排序权重，越大越靠前",
+  },
+  meta: {
+    type: DataTypes.JSON,
+    defaultValue: {},
+    comment: "扩展规则配置",
+  },
+});
+
 const CouponRecord = sequelize.define("CouponRecord", {
   couponNo: {
     type: DataTypes.STRING(64),
@@ -726,6 +787,7 @@ const syncModels = [
   Order,
   AfterSale,
   AdminWhitelist,
+  CouponTemplate,
   CouponRecord,
   Sample,
   HomeAsset,
@@ -811,6 +873,7 @@ module.exports = {
   Order,
   AfterSale,
   AdminWhitelist,
+  CouponTemplate,
   CouponRecord,
   Sample,
   HomeAsset,

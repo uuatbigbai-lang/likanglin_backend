@@ -14,6 +14,7 @@ const {
   Order,
   AfterSale,
   AdminWhitelist,
+  CouponTemplate,
   CouponRecord,
   Sample,
   HomeAsset,
@@ -24,6 +25,7 @@ const {
   wxPayConfig,
   isWxPayConfigured,
   createWechatPrepay,
+  createWechatRefund,
   getOpenidByCode,
   decryptNotifyResource,
 } = require('./wxPay');
@@ -71,31 +73,98 @@ const validateAssetKey = (assetKey) => ASSET_KEY_PATTERN.test(assetKey) && (HOME
 const DEFAULT_USER_AVATAR =
   'https://tdesign.gtimg.com/miniprogram/template/retail/usercenter/icon-user-center-avatar@2x.png';
 
-const COUPON_TEMPLATES = {
-  nine: {
+const ORDER_STATUS_RETURNING = 60;
+const ORDER_STATUS_REFUNDED = 70;
+
+const DEFAULT_COUPON_TEMPLATES = [
+  {
     templateType: 'nine',
     title: '9折券',
-    type: 'discount',
+    ruleType: 'discount',
     value: 9,
+    thresholdAmount: 0,
+    minQuantity: 0,
     desc: '订单商品金额可享9折优惠',
+    sort: 30,
   },
-  seven: {
+  {
     templateType: 'seven',
     title: '7折券',
-    type: 'discount',
+    ruleType: 'discount',
     value: 7,
+    thresholdAmount: 0,
+    minQuantity: 0,
     desc: '订单商品金额可享7折优惠',
+    sort: 20,
   },
-  buy2get1: {
+  {
     templateType: 'buy2get1',
     title: '买二送一券',
-    type: 'gift',
+    ruleType: 'buy_x_get_y',
     value: 1,
+    thresholdAmount: 0,
+    minQuantity: 3,
     desc: '同一订单购买满3件，免除最低价1件商品金额',
+    sort: 10,
   },
+];
+
+const normalizeCouponTemplate = (template = {}) => {
+  const ruleType = String(template.ruleType || template.type || 'discount').trim();
+  const value = Math.max(Number(template.value || 0), 0);
+  const thresholdAmount = Math.max(Number(template.thresholdAmount || template.base || 0), 0);
+  const minQuantity =
+    Math.max(Number(template.minQuantity || (ruleType === 'buy_x_get_y' ? 3 : 0)), 0);
+  const desc = String(template.desc || '').trim() || (
+    ruleType === 'discount'
+      ? `订单商品金额可享${value}折优惠`
+      : ruleType === 'amount'
+        ? `订单可减免${(value / 100).toFixed(2)}元`
+        : `订单满${minQuantity}件，免除最低价${value || 1}件商品金额`
+  );
+
+  return {
+    templateType: String(template.templateType || '').trim(),
+    title: String(template.title || '优惠券').trim(),
+    ruleType,
+    value,
+    thresholdAmount,
+    minQuantity,
+    desc,
+    status: Number(template.status ?? 1),
+    sort: Number(template.sort || 0),
+    meta: template.meta || {},
+  };
 };
 
-const getCouponTemplate = (templateType) => COUPON_TEMPLATES[String(templateType || '').trim()];
+const getCouponTemplateSnapshot = (coupon = {}) => {
+  const data = typeof coupon.toJSON === 'function' ? coupon.toJSON() : coupon;
+  const snapshot = data.meta && Object.keys(data.meta).length ? data.meta : null;
+  if (snapshot) return normalizeCouponTemplate({ ...snapshot, templateType: data.templateType, title: data.title || snapshot.title });
+  const fallback = DEFAULT_COUPON_TEMPLATES.find((item) => item.templateType === data.templateType) || {};
+  return normalizeCouponTemplate({ ...fallback, templateType: data.templateType, title: data.title || fallback.title });
+};
+
+const formatCouponTemplate = (template) => normalizeCouponTemplate(
+  typeof template?.toJSON === 'function' ? template.toJSON() : template,
+);
+
+const ensureDefaultCouponTemplates = async () => {
+  for (const template of DEFAULT_COUPON_TEMPLATES) {
+    const normalized = normalizeCouponTemplate(template);
+    const existed = await CouponTemplate.findOne({ where: { templateType: normalized.templateType } });
+    if (!existed) {
+      await CouponTemplate.create(normalized);
+    }
+  }
+};
+
+const getActiveCouponTemplate = async (templateType) => {
+  const template = await CouponTemplate.findOne({
+    where: { templateType: String(templateType || '').trim(), status: 1 },
+  });
+  return template ? formatCouponTemplate(template) : null;
+};
 
 const buildCouponNo = () => `CP${Date.now()}${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
 
@@ -108,7 +177,7 @@ const isCouponAdmin = async (openid) => {
 const formatCouponRecord = (coupon) => {
   if (!coupon) return null;
   const data = typeof coupon.toJSON === 'function' ? coupon.toJSON() : coupon;
-  const template = getCouponTemplate(data.templateType) || {};
+  const template = getCouponTemplateSnapshot(data);
   const statusMap = {
     generated: 'default',
     claimed: 'default',
@@ -126,7 +195,7 @@ const formatCouponRecord = (coupon) => {
     couponNo: data.couponNo,
     status: statusMap[data.status] || 'disabled',
     recordStatus: data.status,
-    type: template.type === 'gift' ? 4 : 2,
+    type: template.ruleType === 'buy_x_get_y' ? 4 : template.ruleType === 'amount' ? 1 : 2,
     value: template.value || 0,
     tag: statusTextMap[data.status] || '已失效',
     statusText: statusTextMap[data.status] || '已失效',
@@ -134,7 +203,7 @@ const formatCouponRecord = (coupon) => {
     desc: template.desc || '',
     title: data.title || template.title || '优惠券',
     timeLimit: '长期有效',
-    currency: template.type === 'discount' ? '' : '¥',
+    currency: template.ruleType === 'discount' ? '' : '¥',
     createdByOpenid: data.createdByOpenid || '',
     claimedByOpenid: data.claimedByOpenid || '',
     usedByOpenid: data.usedByOpenid || '',
@@ -143,8 +212,8 @@ const formatCouponRecord = (coupon) => {
     createdAt: data.createdAt,
     claimedAt: data.claimedAt,
     usedAt: data.usedAt,
-    useNotes: data.templateType === 'buy2get1'
-      ? '订单商品总数满3件时自动抵扣最低价1件。'
+    useNotes: template.ruleType === 'buy_x_get_y'
+      ? `订单商品总数满${template.minQuantity || 3}件时自动抵扣最低价${template.value || 1}件。`
       : '下单时自动选择可用优惠券并抵扣。',
     storeAdapt: '商城通用',
   };
@@ -154,21 +223,45 @@ const calculateCouponDiscount = (coupon, goodsList = [], totalAmount = 0) => {
   if (!coupon || coupon.status !== 'claimed') return 0;
   const amount = Math.max(Number(totalAmount || 0), 0);
   if (amount <= 0) return 0;
+  const template = getCouponTemplateSnapshot(coupon);
+  if (template.thresholdAmount && amount < template.thresholdAmount) return 0;
 
-  const templateType = coupon.templateType;
-  if (templateType === 'nine') return Math.floor(amount * 0.1);
-  if (templateType === 'seven') return Math.floor(amount * 0.3);
-  if (templateType === 'buy2get1') {
+  if (template.ruleType === 'discount') {
+    if (template.value <= 0 || template.value >= 10) return 0;
+    return Math.floor(amount * (10 - template.value) / 10);
+  }
+  if (template.ruleType === 'amount') {
+    return Math.min(Math.max(Number(template.value || 0), 0), Math.max(amount - 1, 0));
+  }
+  if (template.ruleType === 'buy_x_get_y') {
     const units = [];
     goodsList.forEach((goods) => {
       const qty = Math.max(Number(goods.quantity || goods.buyQuantity || 1), 0);
       const price = Math.max(Number(goods.price || goods.settlePrice || goods.actualPrice || 0), 0);
       for (let index = 0; index < qty; index += 1) units.push(price);
     });
-    if (units.length < 3) return 0;
-    return Math.min(...units);
+    const minQuantity = Math.max(Number(template.minQuantity || 3), 1);
+    const freeQuantity = Math.max(Number(template.value || 1), 1);
+    if (units.length < minQuantity) return 0;
+    return units
+      .sort((left, right) => left - right)
+      .slice(0, freeQuantity)
+      .reduce((sum, price) => sum + price, 0);
   }
   return 0;
+};
+
+const getCouponUnavailableReason = (coupon, goodsList = []) => {
+  if (!coupon) return '优惠券不可用';
+  const template = getCouponTemplateSnapshot(coupon);
+  if (template.ruleType === 'buy_x_get_y') {
+    const totalQuantity = goodsList.reduce((sum, goods) => sum + Math.max(Number(goods.quantity || goods.buyQuantity || 1), 0), 0);
+    if (totalQuantity < (template.minQuantity || 3)) return `${template.title}需当前订单满${template.minQuantity || 3}件商品可用`;
+  }
+  if (template.thresholdAmount) {
+    return `${template.title}需订单满${(template.thresholdAmount / 100).toFixed(2)}元可用`;
+  }
+  return '当前订单暂不满足使用条件';
 };
 
 const buildDefaultNickName = (openid = '') => {
@@ -295,13 +388,21 @@ const formatOrderForMiniProgram = (order, afterSales = []) => {
   const createTime = new Date(data.createdAt || Date.now()).getTime();
   const paySuccessTime = data.paidAt ? new Date(data.paidAt).getTime() : null;
   const latestAfterSaleStatus = Number(latestAfterSale?.rightsStatus);
+  const orderStatusNameMap = {
+    5: '待付款',
+    10: '待发货',
+    40: '待收货',
+    50: '交易完成',
+    [ORDER_STATUS_RETURNING]: '退货中',
+    [ORDER_STATUS_REFUNDED]: '已退款',
+  };
   const displayStatusName = hasActiveAfterSale
     ? (
         latestAfterSaleStatus === AFTER_SERVICE_STATUS.COMPLETE
           ? '售后已完成'
           : Number(latestAfterSale.rightsType) === 10 ? '退货退款中' : '退款处理中'
       )
-    : data.orderStatusName || '待付款';
+    : data.orderStatusName || orderStatusNameMap[Number(data.orderStatus)] || '待付款';
   const sampleStatusNameMap = {
     returning: '回寄中',
     testing: '样本检测中',
@@ -1180,7 +1281,7 @@ app.post('/api/coupon/admin/create', async (req, res) => {
       return res.send({ code: -1, message: '当前账号不是优惠券管理员' });
     }
 
-    const template = getCouponTemplate(req.body?.templateType);
+    const template = await getActiveCouponTemplate(req.body?.templateType);
     if (!template) return res.send({ code: -1, message: '未知优惠券类型' });
 
     const coupon = await CouponRecord.create({
@@ -1193,6 +1294,23 @@ app.post('/api/coupon/admin/create', async (req, res) => {
     });
 
     res.send({ code: 0, data: formatCouponRecord(coupon) });
+  } catch (err) {
+    res.send({ code: -1, message: err.message });
+  }
+});
+
+app.get('/api/coupon/admin/templates', async (req, res) => {
+  try {
+    const openid = req.headers['x-wx-openid'] || 'local_dev_user';
+    if (!(await isCouponAdmin(openid))) {
+      return res.send({ code: -1, message: '当前账号不是优惠券管理员' });
+    }
+    await ensureDefaultCouponTemplates();
+    const templates = await CouponTemplate.findAll({
+      where: { status: 1 },
+      order: [['sort', 'DESC'], ['createdAt', 'ASC']],
+    });
+    res.send({ code: 0, data: templates.map(formatCouponTemplate) });
   } catch (err) {
     res.send({ code: -1, message: err.message });
   }
@@ -1303,6 +1421,42 @@ app.get('/api/admin/coupons', adminAuth, async (req, res) => {
   try {
     const coupons = await CouponRecord.findAll({ order: [['createdAt', 'DESC']] });
     res.send({ code: 0, data: coupons.map(formatCouponRecord) });
+  } catch (err) {
+    res.send({ code: -1, message: err.message });
+  }
+});
+
+app.get('/api/admin/coupon-templates', adminAuth, async (req, res) => {
+  try {
+    await ensureDefaultCouponTemplates();
+    const templates = await CouponTemplate.findAll({ order: [['sort', 'DESC'], ['createdAt', 'ASC']] });
+    res.send({ code: 0, data: templates.map(formatCouponTemplate) });
+  } catch (err) {
+    res.send({ code: -1, message: err.message });
+  }
+});
+
+app.post('/api/admin/coupon-templates', adminAuth, async (req, res) => {
+  try {
+    const payload = normalizeCouponTemplate(req.body || {});
+    if (!payload.templateType) return res.send({ code: -1, message: '请填写模板标识' });
+    if (!payload.title) return res.send({ code: -1, message: '请填写模板标题' });
+    if (!['discount', 'amount', 'buy_x_get_y'].includes(payload.ruleType)) {
+      return res.send({ code: -1, message: '规则类型仅支持 discount/amount/buy_x_get_y' });
+    }
+    if (payload.ruleType === 'discount' && (payload.value <= 0 || payload.value >= 10)) {
+      return res.send({ code: -1, message: '折扣券 value 请填写 0-10 之间的折扣值，如 9 表示9折' });
+    }
+    if (payload.ruleType === 'amount' && payload.value <= 0) {
+      return res.send({ code: -1, message: '满减券 value 请填写减免金额（分）' });
+    }
+    if (payload.ruleType === 'buy_x_get_y' && (!payload.minQuantity || !payload.value)) {
+      return res.send({ code: -1, message: '买赠券请填写 minQuantity 和 value' });
+    }
+
+    await CouponTemplate.upsert(payload);
+    const templates = await CouponTemplate.findAll({ order: [['sort', 'DESC'], ['createdAt', 'ASC']] });
+    res.send({ code: 0, data: templates.map(formatCouponTemplate) });
   } catch (err) {
     res.send({ code: -1, message: err.message });
   }
@@ -2028,20 +2182,25 @@ app.post('/api/order/settle', async (req, res) => {
       where: { claimedByOpenid: openid, status: 'claimed' },
       order: [['claimedAt', 'ASC'], ['createdAt', 'ASC']],
     });
-    const availableCoupons = claimedCoupons
-      .map((coupon) => ({
-        coupon,
-        amount: calculateCouponDiscount(coupon, skuDetailVos, totalSalePrice),
-      }))
-      .filter((item) => item.amount > 0);
-    const selectedCoupon = availableCoupons[0] || null;
+    const couponCandidates = claimedCoupons.map((coupon) => ({
+      coupon,
+      amount: calculateCouponDiscount(coupon, skuDetailVos, totalSalePrice),
+    }));
+    const selectedCoupon = couponCandidates.find((item) => item.amount > 0) || null;
     const totalCouponAmount = selectedCoupon ? selectedCoupon.amount : 0;
     const totalPayAmount = Math.max(totalSalePrice - totalCouponAmount, 1);
-    const couponList = availableCoupons.map(({ coupon, amount }, index) => ({
-      ...formatCouponRecord(coupon),
-      selected: index === 0,
-      discountAmount: String(amount),
-    }));
+    const couponList = couponCandidates.map(({ coupon, amount }) => {
+      const formatted = formatCouponRecord(coupon);
+      const isUsable = amount > 0;
+      return {
+        ...formatted,
+        status: isUsable ? formatted.status : 'useless',
+        selected: !!selectedCoupon && coupon.couponNo === selectedCoupon.coupon.couponNo,
+        discountAmount: String(amount),
+        unavailableReason: isUsable ? '' : getCouponUnavailableReason(coupon, skuDetailVos),
+        desc: isUsable ? formatted.desc : getCouponUnavailableReason(coupon, skuDetailVos),
+      };
+    });
 
     res.send({
       code: 0,
@@ -2385,7 +2544,7 @@ app.get('/api/order/list', async (req, res) => {
     });
     const afterSaleMap = await fetchAfterSalesForOrders(rows.map((order) => order.orderNo));
 
-    const statuses = [-1, 5, 10, 40, 50];
+    const statuses = [-1, 5, 10, 40, 50, ORDER_STATUS_RETURNING, ORDER_STATUS_REFUNDED];
     const tabCounts = await Promise.all(
       statuses.map(async (status) => ({
         tabType: status,
@@ -2715,7 +2874,7 @@ app.get('/api/admin/orders', adminAuth, async (req, res) => {
 
     const { rows, count } = await Order.findAndCountAll(findOptions);
     const afterSaleMap = await fetchAfterSalesForOrders(rows.map((order) => order.orderNo));
-    const statuses = [-1, 5, 10, 40, 50];
+    const statuses = [-1, 5, 10, 40, 50, ORDER_STATUS_RETURNING, ORDER_STATUS_REFUNDED];
     const tabCounts = await Promise.all(
       statuses.map(async (status) => ({
         tabType: status,
@@ -2810,6 +2969,127 @@ app.post('/api/admin/order/ship', adminAuth, async (req, res) => {
     });
   } catch (err) {
     console.error('发货同步失败:', err);
+    res.send({ code: -1, message: err.message });
+  }
+});
+
+app.post('/api/admin/order/payment-amount', adminAuth, async (req, res) => {
+  try {
+    const { orderNo, paymentAmount } = req.body || {};
+    const amount = Math.round(Number(paymentAmount));
+    if (!orderNo) return res.send({ code: -1, message: '请填写订单号' });
+    if (!Number.isFinite(amount) || amount <= 0) return res.send({ code: -1, message: '请填写有效实付金额（分）' });
+
+    const order = await Order.findOne({ where: { orderNo } });
+    if (!order) return res.send({ code: -1, message: '订单不存在' });
+    if (Number(order.orderStatus) !== 5) {
+      return res.send({ code: -1, message: '仅待付款订单可以修改付款金额' });
+    }
+
+    await order.update({
+      paymentAmount: String(amount),
+      prepayId: null,
+    });
+    const afterSales = await fetchAfterSalesForOrder(order.orderNo);
+
+    res.send({ code: 0, data: formatOrderForMiniProgram(order, afterSales) });
+  } catch (err) {
+    res.send({ code: -1, message: err.message });
+  }
+});
+
+app.post('/api/admin/order/return', adminAuth, async (req, res) => {
+  try {
+    const { orderNo, reason = '' } = req.body || {};
+    if (!orderNo) return res.send({ code: -1, message: '请填写订单号' });
+
+    const order = await Order.findOne({ where: { orderNo } });
+    if (!order) return res.send({ code: -1, message: '订单不存在' });
+
+    const currentStatus = Number(order.orderStatus);
+    if (![40, 50, ORDER_STATUS_RETURNING].includes(currentStatus)) {
+      return res.send({ code: -1, message: '只有待收货或交易完成订单可以进入退货中' });
+    }
+
+    if (currentStatus !== ORDER_STATUS_RETURNING) {
+      await order.update({
+        orderStatus: ORDER_STATUS_RETURNING,
+        orderStatusName: '退货中',
+        remark: reason ? `${order.remark || ''}${order.remark ? '\n' : ''}退货备注：${String(reason).slice(0, 200)}` : order.remark,
+      });
+    }
+
+    const afterSales = await fetchAfterSalesForOrder(order.orderNo);
+    res.send({
+      code: 0,
+      message: '订单已进入退货中',
+      data: formatOrderForMiniProgram(order, afterSales),
+    });
+  } catch (err) {
+    console.error('管理端设置退货中失败:', err);
+    res.send({ code: -1, message: err.message });
+  }
+});
+
+app.post('/api/admin/order/refund', adminAuth, async (req, res) => {
+  try {
+    const { orderNo, refundAmount, reason = '订单退款' } = req.body || {};
+    if (!orderNo) return res.send({ code: -1, message: '请填写订单号' });
+    if (!isWxPayConfigured()) return res.send({ code: -1, message: '未配置微信支付，不能发起退款' });
+
+    const order = await Order.findOne({ where: { orderNo } });
+    if (!order) return res.send({ code: -1, message: '订单不存在' });
+    if (Number(order.orderStatus) !== ORDER_STATUS_RETURNING) {
+      return res.send({ code: -1, message: '只有退货中订单可以退款' });
+    }
+
+    const paidAmount = Math.round(Number(order.paymentAmount || order.totalAmount || 0));
+    const amount = refundAmount === undefined || refundAmount === null || refundAmount === ''
+      ? paidAmount
+      : Math.round(Number(refundAmount));
+    if (!Number.isFinite(amount) || amount <= 0) {
+      return res.send({ code: -1, message: '退款金额异常' });
+    }
+    if (amount > paidAmount) {
+      return res.send({ code: -1, message: '退款金额不能大于客户实付金额' });
+    }
+
+    let wechatRefund;
+    try {
+      wechatRefund = await createWechatRefund({
+        orderNo: order.orderNo,
+        transactionId: order.transactionId,
+        totalAmount: paidAmount,
+        refundAmount: amount,
+        reason,
+      });
+    } catch (err) {
+      return res.send({
+        code: -1,
+        message: err.message || '微信退款失败',
+        data: {
+          wechatResult: err.wechatResult || null,
+        },
+      });
+    }
+
+    await order.update({
+      orderStatus: ORDER_STATUS_REFUNDED,
+      orderStatusName: '已退款',
+      remark: `${order.remark || ''}${order.remark ? '\n' : ''}退款单号：${wechatRefund.outRefundNo}`,
+    });
+
+    const afterSales = await fetchAfterSalesForOrder(order.orderNo);
+    res.send({
+      code: 0,
+      message: '微信退款已发起，订单已标记为已退款',
+      data: {
+        wechatRefund,
+        order: formatOrderForMiniProgram(order, afterSales),
+      },
+    });
+  } catch (err) {
+    console.error('管理端退款失败:', err);
     res.send({ code: -1, message: err.message });
   }
 });
@@ -3110,6 +3390,7 @@ const postLocalSeed = (pathName, label) => {
 
 async function bootstrap() {
   await initDB();
+  await ensureDefaultCouponTemplates();
   startAutoConfirmReceivedTask();
 
   // 本地开发模式下自动插入种子数据（SQLite 内存库每次重启都是空的）

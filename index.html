@@ -190,6 +190,19 @@
       font-size: 13px;
       line-height: 20px;
     }
+    .template-form {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(120px, 1fr));
+      gap: 10px;
+      align-items: end;
+      margin-bottom: 14px;
+    }
+    .template-form .wide {
+      grid-column: span 2;
+    }
+    .template-form .full {
+      grid-column: 1 / -1;
+    }
     .table-wrap {
       overflow-x: auto;
     }
@@ -248,6 +261,8 @@
     .badge.shipped { background: #edf4ff; color: #1f5f9f; }
     .badge.done { background: #ecfdf3; color: #027a48; }
     .badge.after-sale { background: #fff1f3; color: #c01048; }
+    .badge.returning { background: #fff1f3; color: #c01048; }
+    .badge.refunded { background: #f4f3ff; color: #5925dc; }
     .row-actions {
       display: flex;
       gap: 8px;
@@ -301,8 +316,13 @@
       .toolbar,
       .admin-grid,
       .inline-form,
+      .template-form,
       .ship-form {
         grid-template-columns: 1fr;
+      }
+      .template-form .wide,
+      .template-form .full {
+        grid-column: 1;
       }
     }
   </style>
@@ -354,6 +374,60 @@
       </div>
     </section>
 
+    <section class="panel admin-card" style="margin-bottom:16px">
+      <div class="card-head">
+        <h2>优惠券规则模板</h2>
+        <button id="refreshCouponTemplates" class="subtle" type="button">刷新</button>
+      </div>
+      <div class="template-form">
+        <div>
+          <label for="tplType">模板标识</label>
+          <input id="tplType" placeholder="如 nine / buy3get1">
+        </div>
+        <div>
+          <label for="tplTitle">标题</label>
+          <input id="tplTitle" placeholder="如 8折券">
+        </div>
+        <div>
+          <label for="tplRuleType">规则类型</label>
+          <select id="tplRuleType">
+            <option value="discount">折扣 discount</option>
+            <option value="amount">满减 amount</option>
+            <option value="buy_x_get_y">买赠 buy_x_get_y</option>
+          </select>
+        </div>
+        <div>
+          <label for="tplValue">值</label>
+          <input id="tplValue" type="number" placeholder="9折填9；满减填分；买赠填免几件">
+        </div>
+        <div>
+          <label for="tplThreshold">金额门槛（分）</label>
+          <input id="tplThreshold" type="number" placeholder="0 表示无门槛">
+        </div>
+        <div>
+          <label for="tplMinQty">件数门槛</label>
+          <input id="tplMinQty" type="number" placeholder="买赠如 3">
+        </div>
+        <div>
+          <label for="tplSort">排序</label>
+          <input id="tplSort" type="number" placeholder="越大越靠前">
+        </div>
+        <div>
+          <label for="tplStatus">状态</label>
+          <select id="tplStatus">
+            <option value="1">启用</option>
+            <option value="0">停用</option>
+          </select>
+        </div>
+        <div class="wide">
+          <label for="tplDesc">说明</label>
+          <input id="tplDesc" placeholder="展示给用户看的规则说明">
+        </div>
+        <button id="saveCouponTemplate" type="button">保存模板</button>
+      </div>
+      <div id="couponTemplates" class="mini-list"></div>
+    </section>
+
     <section class="toolbar">
       <div>
         <label for="keyword">搜索订单号 / 微信交易单号</label>
@@ -367,6 +441,8 @@
           <option value="10">待发货</option>
           <option value="40">待收货</option>
           <option value="50">已完成</option>
+          <option value="60">退货中</option>
+          <option value="70">已退款</option>
         </select>
       </div>
       <div>
@@ -474,6 +550,8 @@
       if (Number(order.orderStatus) === 10) return 'pending';
       if (Number(order.orderStatus) === 40) return 'shipped';
       if (Number(order.orderStatus) === 50) return 'done';
+      if (Number(order.orderStatus) === 60) return 'returning';
+      if (Number(order.orderStatus) === 70) return 'refunded';
       return '';
     }
 
@@ -493,6 +571,8 @@
         10: '待发货',
         40: '待收货',
         50: '已完成',
+        60: '退货中',
+        70: '已退款',
       };
       const current = $('statusFilter').value;
       $('stats').innerHTML = tabCounts.map((item) => `
@@ -522,6 +602,9 @@
         const logistics = order.logisticsVO || {};
         const payment = order.paymentVO || {};
         const isPendingDelivery = Number(order.orderStatus) === 10;
+        const isPendingPay = Number(order.orderStatus) === 5;
+        const canStartReturn = [40, 50].includes(Number(order.orderStatus));
+        const canRefund = Number(order.orderStatus) === 60;
         const isExpanded = state.expandedOrderNo === order.orderNo;
         const receiver = [logistics.receiverName, logistics.receiverPhone].filter(Boolean).join(' ');
         const address = [
@@ -557,7 +640,10 @@
             </td>
             <td>
               <div class="row-actions">
+                ${isPendingPay ? `<button type="button" data-action="edit-payment" data-order-no="${escapeHtml(order.orderNo)}" data-payment-amount="${escapeHtml(order.paymentAmount || order.totalAmount || '0')}">改金额</button>` : ''}
                 ${isPendingDelivery ? `<button type="button" data-action="toggle-ship" data-order-no="${escapeHtml(order.orderNo)}">${isExpanded ? '收起发货' : '同步发货'}</button>` : ''}
+                ${canStartReturn ? `<button type="button" data-action="start-return" data-order-no="${escapeHtml(order.orderNo)}">退货</button>` : ''}
+                ${canRefund ? `<button type="button" data-action="refund" data-order-no="${escapeHtml(order.orderNo)}" data-payment-amount="${escapeHtml(order.paymentAmount || order.totalAmount || '0')}">退款</button>` : ''}
                 <button type="button" class="secondary" data-action="view" data-order-no="${escapeHtml(order.orderNo)}">查看</button>
               </div>
             </td>
@@ -743,6 +829,80 @@
       }
     }
 
+    function ruleTypeText(ruleType) {
+      return {
+        discount: '折扣',
+        amount: '满减',
+        buy_x_get_y: '买赠',
+      }[ruleType] || ruleType || '-';
+    }
+
+    async function loadCouponTemplates() {
+      try {
+        const json = await requestJson('/api/admin/coupon-templates', { headers: headers() });
+        const templates = json.data || [];
+        $('couponTemplates').innerHTML = templates.length ? templates.map((item) => `
+          <div class="mini-row">
+            <div>
+              <strong>${escapeHtml(item.title)} / ${escapeHtml(item.templateType)}</strong>
+              <div class="small">规则：${escapeHtml(ruleTypeText(item.ruleType))}，值：${escapeHtml(item.value)}，金额门槛：${money(item.thresholdAmount || 0)}，件数门槛：${escapeHtml(item.minQuantity || 0)}</div>
+              <div class="small">说明：${escapeHtml(item.desc || '-')} / 状态：${Number(item.status) === 1 ? '启用' : '停用'}</div>
+            </div>
+            <button class="secondary" type="button" data-action="edit-template" data-template="${escapeHtml(JSON.stringify(item))}">编辑</button>
+          </div>
+        `).join('') : '<div class="empty">暂无优惠券模板</div>';
+      } catch (err) {
+        $('couponTemplates').innerHTML = `<div class="empty">${escapeHtml(err.message)}</div>`;
+      }
+    }
+
+    async function saveCouponTemplate() {
+      const payload = {
+        templateType: $('tplType').value.trim(),
+        title: $('tplTitle').value.trim(),
+        ruleType: $('tplRuleType').value,
+        value: Number($('tplValue').value || 0),
+        thresholdAmount: Number($('tplThreshold').value || 0),
+        minQuantity: Number($('tplMinQty').value || 0),
+        sort: Number($('tplSort').value || 0),
+        status: Number($('tplStatus').value),
+        desc: $('tplDesc').value.trim(),
+      };
+      try {
+        await requestJson('/api/admin/coupon-templates', {
+          method: 'POST',
+          headers: headers(),
+          body: JSON.stringify(payload),
+        });
+        showNotice('优惠券模板已保存');
+        loadCouponTemplates();
+      } catch (err) {
+        showNotice(err.message, true);
+      }
+    }
+
+    async function updateOrderPaymentAmount(orderNo, currentAmount) {
+      const currentYuan = (Number(currentAmount || 0) / 100).toFixed(2);
+      const value = window.prompt(`请输入新的客户付款金额（元）\n订单：${orderNo}`, currentYuan);
+      if (value === null) return;
+      const amount = Math.round(Number(value) * 100);
+      if (!Number.isFinite(amount) || amount <= 0) {
+        showNotice('请输入有效金额', true);
+        return;
+      }
+      try {
+        await requestJson('/api/admin/order/payment-amount', {
+          method: 'POST',
+          headers: headers(),
+          body: JSON.stringify({ orderNo, paymentAmount: amount }),
+        });
+        showNotice('订单付款金额已更新');
+        loadOrders(state.pageNum);
+      } catch (err) {
+        showNotice(err.message, true);
+      }
+    }
+
     async function saveCouponAdmin() {
       const openid = $('couponAdminOpenid').value.trim();
       const remark = $('couponAdminRemark').value.trim();
@@ -803,6 +963,50 @@
       }
     }
 
+    async function startReturn(orderNo) {
+      const reason = window.prompt(`请输入退货备注（可留空）\n订单：${orderNo}`, '客户申请退货');
+      if (reason === null) return;
+      if (!window.confirm(`确认将订单 ${orderNo} 改为“退货中”？`)) return;
+
+      try {
+        const json = await requestJson('/api/admin/order/return', {
+          method: 'POST',
+          headers: headers(),
+          body: JSON.stringify({ orderNo, reason }),
+        });
+        showNotice(json.message || '订单已进入退货中');
+        await loadOrders(state.pageNum);
+      } catch (err) {
+        showNotice(err.message, true);
+      }
+    }
+
+    async function refundOrder(orderNo, currentAmount) {
+      const currentYuan = (Number(currentAmount || 0) / 100).toFixed(2);
+      const value = window.prompt(`请输入退款金额（元）\n订单：${orderNo}`, currentYuan);
+      if (value === null) return;
+      const amount = Math.round(Number(value) * 100);
+      if (!Number.isFinite(amount) || amount <= 0) {
+        showNotice('请输入有效退款金额', true);
+        return;
+      }
+      const reason = window.prompt('请输入退款原因', '订单退款');
+      if (reason === null) return;
+      if (!window.confirm(`确认向微信支付发起退款？\n订单：${orderNo}\n金额：${money(amount)}`)) return;
+
+      try {
+        const json = await requestJson('/api/admin/order/refund', {
+          method: 'POST',
+          headers: headers(),
+          body: JSON.stringify({ orderNo, refundAmount: amount, reason }),
+        });
+        showNotice(json.message || '退款已发起');
+        await loadOrders(state.pageNum);
+      } catch (err) {
+        showNotice(err.message, true);
+      }
+    }
+
     $('ordersBody').addEventListener('click', (event) => {
       const target = event.target.closest('[data-action]');
       if (!target) return;
@@ -815,6 +1019,15 @@
       }
       if (action === 'submit-ship') {
         shipOrder(orderNo);
+      }
+      if (action === 'edit-payment') {
+        updateOrderPaymentAmount(orderNo, target.dataset.paymentAmount);
+      }
+      if (action === 'start-return') {
+        startReturn(orderNo);
+      }
+      if (action === 'refund') {
+        refundOrder(orderNo, target.dataset.paymentAmount);
       }
       if (action === 'view') {
         state.expandedOrderNo = '';
@@ -845,6 +1058,22 @@
       showNotice('已填入管理员 openid，点击保存即可加入白名单');
     });
 
+    $('couponTemplates').addEventListener('click', (event) => {
+      const target = event.target.closest('[data-action="edit-template"]');
+      if (!target) return;
+      const item = JSON.parse(target.dataset.template || '{}');
+      $('tplType').value = item.templateType || '';
+      $('tplTitle').value = item.title || '';
+      $('tplRuleType').value = item.ruleType || 'discount';
+      $('tplValue').value = item.value || 0;
+      $('tplThreshold').value = item.thresholdAmount || 0;
+      $('tplMinQty').value = item.minQuantity || 0;
+      $('tplSort').value = item.sort || 0;
+      $('tplStatus').value = String(item.status ?? 1);
+      $('tplDesc').value = item.desc || '';
+      showNotice('模板已填入表单，修改后点击保存');
+    });
+
     $('ordersBody').addEventListener('change', (event) => {
       const select = event.target.closest('[data-field="expressCompany"]');
       if (!select) return;
@@ -869,6 +1098,8 @@
     $('pageSize').addEventListener('change', () => loadOrders(1));
     $('refreshOrders').addEventListener('click', () => loadOrders(state.pageNum));
     $('addCouponAdmin').addEventListener('click', saveCouponAdmin);
+    $('saveCouponTemplate').addEventListener('click', saveCouponTemplate);
+    $('refreshCouponTemplates').addEventListener('click', loadCouponTemplates);
     $('refreshLatestUsers').addEventListener('click', () => {
       loadLatestUsers();
       showNotice('最新登录用户已刷新');
@@ -880,12 +1111,14 @@
       loadCouponAdmins();
       loadLatestUsers();
       loadCouponRecords();
+      loadCouponTemplates();
     });
 
     loadOrders(1);
     loadCouponAdmins();
     loadLatestUsers();
     loadCouponRecords();
+    loadCouponTemplates();
   </script>
 </body>
 </html>
