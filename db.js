@@ -319,6 +319,22 @@ const Order = sequelize.define("Order", {
     type: DataTypes.STRING(20),
     comment: "实付金额（分）",
   },
+  couponNo: {
+    type: DataTypes.STRING(64),
+    allowNull: true,
+    comment: "使用的优惠券编号",
+  },
+  couponAmount: {
+    type: DataTypes.STRING(20),
+    allowNull: false,
+    defaultValue: "0",
+    comment: "优惠券抵扣金额（分）",
+  },
+  couponSnapshot: {
+    type: DataTypes.JSON,
+    defaultValue: null,
+    comment: "下单时优惠券快照",
+  },
   goodsList: {
     type: DataTypes.JSON,
     defaultValue: [],
@@ -475,6 +491,87 @@ const AfterSale = sequelize.define("AfterSale", {
   },
 });
 
+const AdminWhitelist = sequelize.define("AdminWhitelist", {
+  openid: {
+    type: DataTypes.STRING(128),
+    allowNull: false,
+    unique: true,
+    comment: "可管理优惠券的微信用户openid",
+  },
+  remark: {
+    type: DataTypes.STRING(100),
+    allowNull: true,
+    defaultValue: "",
+    comment: "备注",
+  },
+});
+
+const CouponRecord = sequelize.define("CouponRecord", {
+  couponNo: {
+    type: DataTypes.STRING(64),
+    allowNull: false,
+    unique: true,
+    comment: "优惠券编号",
+  },
+  templateType: {
+    type: DataTypes.STRING(32),
+    allowNull: false,
+    comment: "nine折券/seven折券/buy2get1",
+  },
+  title: {
+    type: DataTypes.STRING(80),
+    allowNull: false,
+    comment: "优惠券标题",
+  },
+  status: {
+    type: DataTypes.STRING(20),
+    allowNull: false,
+    defaultValue: "generated",
+    comment: "generated待领取/claimed已领取/used已核销/expired已失效",
+  },
+  createdByOpenid: {
+    type: DataTypes.STRING(128),
+    allowNull: true,
+    comment: "生成优惠券的管理员openid",
+  },
+  claimedByOpenid: {
+    type: DataTypes.STRING(128),
+    allowNull: true,
+    comment: "领取优惠券的用户openid",
+  },
+  usedByOpenid: {
+    type: DataTypes.STRING(128),
+    allowNull: true,
+    comment: "核销优惠券的用户openid",
+  },
+  orderNo: {
+    type: DataTypes.STRING(64),
+    allowNull: true,
+    comment: "核销订单编号",
+  },
+  discountAmount: {
+    type: DataTypes.STRING(20),
+    allowNull: false,
+    defaultValue: "0",
+    comment: "核销抵扣金额（分）",
+  },
+  claimedAt: {
+    type: DataTypes.DATE,
+    allowNull: true,
+    comment: "领取时间",
+  },
+  usedAt: {
+    type: DataTypes.DATE,
+    allowNull: true,
+    comment: "核销时间",
+  },
+  meta: {
+    type: DataTypes.JSON,
+    defaultValue: {},
+    comment: "优惠券规则快照",
+  },
+});
+
 // 检测样本信息
 const Sample = sequelize.define("Sample", {
   openid: {
@@ -628,6 +725,8 @@ const syncModels = [
   CartItem,
   Order,
   AfterSale,
+  AdminWhitelist,
+  CouponRecord,
   Sample,
   HomeAsset,
   HomeBanner,
@@ -672,6 +771,22 @@ async function ensureOnlineSchema() {
     defaultValue: "",
     comment: "检测样本状态 returning/testing/completed",
   });
+  await ensureColumn("Orders", "couponNo", {
+    type: DataTypes.STRING(64),
+    allowNull: true,
+    comment: "使用的优惠券编号",
+  });
+  await ensureColumn("Orders", "couponAmount", {
+    type: DataTypes.STRING(20),
+    allowNull: false,
+    defaultValue: "0",
+    comment: "优惠券抵扣金额（分）",
+  });
+  await ensureColumn("Orders", "couponSnapshot", {
+    type: DataTypes.JSON,
+    defaultValue: null,
+    comment: "下单时优惠券快照",
+  });
 }
 
 // 数据库初始化方法
@@ -695,6 +810,8 @@ module.exports = {
   CartItem,
   Order,
   AfterSale,
+  AdminWhitelist,
+  CouponRecord,
   Sample,
   HomeAsset,
   HomeBanner,

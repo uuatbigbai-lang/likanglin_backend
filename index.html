@@ -139,6 +139,57 @@
     .panel {
       overflow: hidden;
     }
+    .admin-grid {
+      display: grid;
+      grid-template-columns: minmax(280px, 0.9fr) minmax(320px, 1fr) minmax(420px, 1.3fr);
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+    .admin-card {
+      padding: 16px;
+    }
+    .inline-form {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 0.75fr);
+      gap: 10px;
+      align-items: end;
+      margin-bottom: 12px;
+    }
+    .inline-form button {
+      grid-column: 1 / -1;
+      width: 100%;
+    }
+    .card-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+    .card-head h2 {
+      margin: 0;
+      font-size: 18px;
+    }
+    .card-head button {
+      min-height: 32px;
+      padding: 0 10px;
+      font-size: 13px;
+    }
+    .mini-list {
+      display: grid;
+      gap: 8px;
+      max-height: 260px;
+      overflow: auto;
+    }
+    .mini-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 9px 0;
+      border-bottom: 1px solid #eef2f6;
+      font-size: 13px;
+      line-height: 20px;
+    }
     .table-wrap {
       overflow-x: auto;
     }
@@ -248,6 +299,8 @@
     @media (max-width: 920px) {
       .topbar,
       .toolbar,
+      .admin-grid,
+      .inline-form,
       .ship-form {
         grid-template-columns: 1fr;
       }
@@ -268,6 +321,38 @@
     </header>
 
     <div id="notice" class="notice"></div>
+
+    <section class="admin-grid">
+      <div class="panel admin-card">
+        <h2 style="margin:0 0 12px;font-size:18px">优惠券管理员</h2>
+        <div class="inline-form">
+          <div>
+            <label for="couponAdminOpenid">白名单 openid</label>
+            <input id="couponAdminOpenid" placeholder="请输入管理员 openid">
+          </div>
+          <div>
+            <label for="couponAdminRemark">备注</label>
+            <input id="couponAdminRemark" placeholder="可选">
+          </div>
+          <button id="addCouponAdmin" type="button">保存</button>
+        </div>
+        <div id="couponAdmins" class="mini-list"></div>
+      </div>
+
+      <div class="panel admin-card">
+        <div class="card-head">
+          <h2>最新登录用户</h2>
+          <button id="refreshLatestUsers" class="subtle" type="button">刷新</button>
+        </div>
+        <p class="small" style="margin:0 0 12px">显示最近登录的 5 个用户，方便复制 openid 或加入白名单。</p>
+        <div id="latestUsers" class="mini-list"></div>
+      </div>
+
+      <div class="panel admin-card">
+        <h2 style="margin:0 0 12px;font-size:18px">优惠券流水</h2>
+        <div id="couponRecords" class="mini-list"></div>
+      </div>
+    </section>
 
     <section class="toolbar">
       <div>
@@ -575,6 +660,111 @@
       }
     }
 
+    function couponStatusText(status) {
+      return {
+        generated: '待认领',
+        claimed: '待使用',
+        used: '已核销',
+        expired: '已作废',
+      }[status] || status || '-';
+    }
+
+    function formatDateTime(value) {
+      if (!value) return '-';
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return '-';
+      return date.toLocaleString('zh-CN', { hour12: false });
+    }
+
+    async function loadCouponAdmins() {
+      try {
+        const json = await requestJson('/api/admin/coupon-admins', { headers: headers() });
+        const admins = json.data || [];
+        $('couponAdmins').innerHTML = admins.length ? admins.map((item) => `
+          <div class="mini-row">
+            <div>
+              <strong>${escapeHtml(item.openid)}</strong>
+              <div class="small">${escapeHtml(item.remark || '-')}</div>
+            </div>
+            <button class="subtle" type="button" data-action="delete-coupon-admin" data-openid="${escapeHtml(item.openid)}">删除</button>
+          </div>
+        `).join('') : '<div class="empty">暂无管理员 openid</div>';
+      } catch (err) {
+        $('couponAdmins').innerHTML = `<div class="empty">${escapeHtml(err.message)}</div>`;
+      }
+    }
+
+    async function loadLatestUsers() {
+      const button = $('refreshLatestUsers');
+      if (button) button.disabled = true;
+      try {
+        const json = await requestJson('/api/admin/latest-users', { headers: headers() });
+        const users = json.data || [];
+        $('latestUsers').innerHTML = users.length ? users.map((item) => `
+          <div class="mini-row">
+            <div>
+              <strong>${escapeHtml(item.nickName || '未命名用户')}</strong>
+              <div class="small">openid：${escapeHtml(item.openid || '-')}</div>
+              <div class="small">最近登录：${escapeHtml(formatDateTime(item.updatedAt))}</div>
+            </div>
+            <button
+              class="secondary"
+              type="button"
+              data-action="fill-coupon-admin"
+              data-openid="${escapeHtml(item.openid || '')}"
+              data-name="${escapeHtml(item.nickName || '')}"
+            >填入</button>
+          </div>
+        `).join('') : '<div class="empty">暂无用户登录记录</div>';
+      } catch (err) {
+        $('latestUsers').innerHTML = `<div class="empty">${escapeHtml(err.message)}</div>`;
+      } finally {
+        if (button) button.disabled = false;
+      }
+    }
+
+    async function loadCouponRecords() {
+      try {
+        const json = await requestJson('/api/admin/coupons', { headers: headers() });
+        const records = json.data || [];
+        $('couponRecords').innerHTML = records.length ? records.map((item) => `
+          <div class="mini-row">
+            <div>
+              <strong>${escapeHtml(item.title)} / ${escapeHtml(item.couponNo)}</strong>
+              <div class="small">生成：${escapeHtml(item.createdByOpenid || '-')}</div>
+              <div class="small">领取：${escapeHtml(item.claimedByOpenid || '-')}</div>
+              <div class="small">核销：${escapeHtml(item.usedByOpenid || '-')} ${item.orderNo ? ` / 订单 ${escapeHtml(item.orderNo)}` : ''}</div>
+            </div>
+            <span class="badge ${item.recordStatus === 'used' ? 'done' : item.recordStatus === 'claimed' ? 'pending' : ''}">${escapeHtml(couponStatusText(item.recordStatus))}</span>
+          </div>
+        `).join('') : '<div class="empty">暂无优惠券记录</div>';
+      } catch (err) {
+        $('couponRecords').innerHTML = `<div class="empty">${escapeHtml(err.message)}</div>`;
+      }
+    }
+
+    async function saveCouponAdmin() {
+      const openid = $('couponAdminOpenid').value.trim();
+      const remark = $('couponAdminRemark').value.trim();
+      if (!openid) {
+        showNotice('请填写白名单 openid', true);
+        return;
+      }
+      try {
+        await requestJson('/api/admin/coupon-admins', {
+          method: 'POST',
+          headers: headers(),
+          body: JSON.stringify({ openid, remark }),
+        });
+        $('couponAdminOpenid').value = '';
+        $('couponAdminRemark').value = '';
+        showNotice('优惠券管理员已保存');
+        loadCouponAdmins();
+      } catch (err) {
+        showNotice(err.message, true);
+      }
+    }
+
     async function shipOrder(orderNo) {
       const form = Array.from(document.querySelectorAll('[data-ship-form]'))
         .find((node) => node.dataset.shipForm === orderNo);
@@ -632,6 +822,29 @@
       }
     });
 
+    $('couponAdmins').addEventListener('click', async (event) => {
+      const target = event.target.closest('[data-action="delete-coupon-admin"]');
+      if (!target) return;
+      try {
+        await requestJson(`/api/admin/coupon-admins/${encodeURIComponent(target.dataset.openid)}`, {
+          method: 'DELETE',
+          headers: headers(),
+        });
+        showNotice('优惠券管理员已删除');
+        loadCouponAdmins();
+      } catch (err) {
+        showNotice(err.message, true);
+      }
+    });
+
+    $('latestUsers').addEventListener('click', (event) => {
+      const target = event.target.closest('[data-action="fill-coupon-admin"]');
+      if (!target) return;
+      $('couponAdminOpenid').value = target.dataset.openid || '';
+      $('couponAdminRemark').value = target.dataset.name ? `用户：${target.dataset.name}` : '';
+      showNotice('已填入管理员 openid，点击保存即可加入白名单');
+    });
+
     $('ordersBody').addEventListener('change', (event) => {
       const select = event.target.closest('[data-field="expressCompany"]');
       if (!select) return;
@@ -655,11 +868,24 @@
     $('statusFilter').addEventListener('change', () => loadOrders(1));
     $('pageSize').addEventListener('change', () => loadOrders(1));
     $('refreshOrders').addEventListener('click', () => loadOrders(state.pageNum));
+    $('addCouponAdmin').addEventListener('click', saveCouponAdmin);
+    $('refreshLatestUsers').addEventListener('click', () => {
+      loadLatestUsers();
+      showNotice('最新登录用户已刷新');
+    });
     $('prevPage').addEventListener('click', () => loadOrders(Math.max(1, state.pageNum - 1)));
     $('nextPage').addEventListener('click', () => loadOrders(state.pageNum + 1));
-    $('adminToken').addEventListener('change', () => loadOrders(1));
+    $('adminToken').addEventListener('change', () => {
+      loadOrders(1);
+      loadCouponAdmins();
+      loadLatestUsers();
+      loadCouponRecords();
+    });
 
     loadOrders(1);
+    loadCouponAdmins();
+    loadLatestUsers();
+    loadCouponRecords();
   </script>
 </body>
 </html>

@@ -13,6 +13,8 @@ const {
   CartItem,
   Order,
   AfterSale,
+  AdminWhitelist,
+  CouponRecord,
   Sample,
   HomeAsset,
   HomeBanner,
@@ -68,6 +70,106 @@ const validateAssetKey = (assetKey) => ASSET_KEY_PATTERN.test(assetKey) && (HOME
 
 const DEFAULT_USER_AVATAR =
   'https://tdesign.gtimg.com/miniprogram/template/retail/usercenter/icon-user-center-avatar@2x.png';
+
+const COUPON_TEMPLATES = {
+  nine: {
+    templateType: 'nine',
+    title: '9折券',
+    type: 'discount',
+    value: 9,
+    desc: '订单商品金额可享9折优惠',
+  },
+  seven: {
+    templateType: 'seven',
+    title: '7折券',
+    type: 'discount',
+    value: 7,
+    desc: '订单商品金额可享7折优惠',
+  },
+  buy2get1: {
+    templateType: 'buy2get1',
+    title: '买二送一券',
+    type: 'gift',
+    value: 1,
+    desc: '同一订单购买满3件，免除最低价1件商品金额',
+  },
+};
+
+const getCouponTemplate = (templateType) => COUPON_TEMPLATES[String(templateType || '').trim()];
+
+const buildCouponNo = () => `CP${Date.now()}${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+
+const isCouponAdmin = async (openid) => {
+  if (!openid) return false;
+  const count = await AdminWhitelist.count({ where: { openid } });
+  return count > 0;
+};
+
+const formatCouponRecord = (coupon) => {
+  if (!coupon) return null;
+  const data = typeof coupon.toJSON === 'function' ? coupon.toJSON() : coupon;
+  const template = getCouponTemplate(data.templateType) || {};
+  const statusMap = {
+    generated: 'default',
+    claimed: 'default',
+    used: 'useless',
+    expired: 'disabled',
+  };
+  const statusTextMap = {
+    generated: '待认领',
+    claimed: '待使用',
+    used: '已核销',
+    expired: '已作废',
+  };
+  return {
+    key: data.couponNo,
+    couponNo: data.couponNo,
+    status: statusMap[data.status] || 'disabled',
+    recordStatus: data.status,
+    type: template.type === 'gift' ? 4 : 2,
+    value: template.value || 0,
+    tag: statusTextMap[data.status] || '已失效',
+    statusText: statusTextMap[data.status] || '已失效',
+    canVoid: ['generated', 'claimed'].includes(data.status),
+    desc: template.desc || '',
+    title: data.title || template.title || '优惠券',
+    timeLimit: '长期有效',
+    currency: template.type === 'discount' ? '' : '¥',
+    createdByOpenid: data.createdByOpenid || '',
+    claimedByOpenid: data.claimedByOpenid || '',
+    usedByOpenid: data.usedByOpenid || '',
+    orderNo: data.orderNo || '',
+    discountAmount: data.discountAmount || '0',
+    createdAt: data.createdAt,
+    claimedAt: data.claimedAt,
+    usedAt: data.usedAt,
+    useNotes: data.templateType === 'buy2get1'
+      ? '订单商品总数满3件时自动抵扣最低价1件。'
+      : '下单时自动选择可用优惠券并抵扣。',
+    storeAdapt: '商城通用',
+  };
+};
+
+const calculateCouponDiscount = (coupon, goodsList = [], totalAmount = 0) => {
+  if (!coupon || coupon.status !== 'claimed') return 0;
+  const amount = Math.max(Number(totalAmount || 0), 0);
+  if (amount <= 0) return 0;
+
+  const templateType = coupon.templateType;
+  if (templateType === 'nine') return Math.floor(amount * 0.1);
+  if (templateType === 'seven') return Math.floor(amount * 0.3);
+  if (templateType === 'buy2get1') {
+    const units = [];
+    goodsList.forEach((goods) => {
+      const qty = Math.max(Number(goods.quantity || goods.buyQuantity || 1), 0);
+      const price = Math.max(Number(goods.price || goods.settlePrice || goods.actualPrice || 0), 0);
+      for (let index = 0; index < qty; index += 1) units.push(price);
+    });
+    if (units.length < 3) return 0;
+    return Math.min(...units);
+  }
+  return 0;
+};
 
 const buildDefaultNickName = (openid = '') => {
   const suffix = String(openid || 'guest')
@@ -224,7 +326,7 @@ const formatOrderForMiniProgram = (order, afterSales = []) => {
     paymentAmount: String(data.paymentAmount || data.totalAmount || '0'),
     freightFee: '0',
     packageFee: '0',
-    discountAmount: '0',
+    discountAmount: String(data.couponAmount || '0'),
     channelType: 0,
     channelSource: '',
     channelIdentity: '',
@@ -289,7 +391,9 @@ const formatOrderForMiniProgram = (order, afterSales = []) => {
     buttonVOs: hasActiveAfterSale ? [{ primary: false, type: 5, name: '查看售后' }] : getOrderButtons(data.orderStatus),
     labelVOs: null,
     invoiceVO: null,
-    couponAmount: '0',
+    couponAmount: String(data.couponAmount || '0'),
+    couponNo: data.couponNo || '',
+    couponSnapshot: data.couponSnapshot || null,
     autoCancelTime: createTime + 30 * 60 * 1000,
     orderStatusName: displayStatusName,
     orderStatusRemark:
@@ -499,6 +603,78 @@ const mergeTrajectory = (trajectoryVos = [], actionType, eventTime = Date.now())
     },
     ...next,
   ];
+};
+
+const readAutoCheckDays = () => {
+  const raw = process.env.AUTO_CHECK;
+  if (raw === undefined || raw === '') return 14;
+  const days = Number(raw);
+  if (!Number.isFinite(days) || days <= 0) return 0;
+  return days;
+};
+
+const getShippedAt = (order) => {
+  const data = typeof order.toJSON === 'function' ? order.toJSON() : order;
+  const trajectoryVos = Array.isArray(data.trajectoryVos) ? data.trajectoryVos : [];
+  const shipped = trajectoryVos.find((item) => String(item.code) === '200003');
+  const shippedTimestamp = shipped && shipped.nodes && shipped.nodes[0] && Number(shipped.nodes[0].timestamp);
+  if (Number.isFinite(shippedTimestamp) && shippedTimestamp > 0) return shippedTimestamp;
+  return new Date(data.updatedAt || data.createdAt || Date.now()).getTime();
+};
+
+const autoConfirmReceivedOrders = async () => {
+  const days = readAutoCheckDays();
+  if (!days) {
+    console.log('⏱️ AUTO_CHECK 未启用，跳过自动确认收货');
+    return { checked: 0, confirmed: 0, skipped: true };
+  }
+
+  const deadline = Date.now() - days * 24 * 60 * 60 * 1000;
+  const orders = await Order.findAll({ where: { orderStatus: 40 } });
+  let confirmed = 0;
+
+  for (const order of orders) {
+    const shippedAt = getShippedAt(order);
+    if (shippedAt > deadline) continue;
+
+    const activeAfterSaleCount = await AfterSale.count({
+      where: {
+        orderNo: order.orderNo,
+        rightsStatus: { [Op.ne]: AFTER_SERVICE_STATUS.CLOSED },
+      },
+    });
+    if (activeAfterSaleCount > 0) continue;
+
+    await order.update({
+      orderStatus: 50,
+      orderStatusName: '交易完成',
+      trajectoryVos: mergeTrajectory(order.trajectoryVos || [], 300003),
+    });
+    confirmed += 1;
+    console.log(`✅ 自动确认收货: ${order.orderNo}，发货已超过 ${days} 天`);
+  }
+
+  return { checked: orders.length, confirmed, days };
+};
+
+const startAutoConfirmReceivedTask = () => {
+  const days = readAutoCheckDays();
+  if (!days) {
+    console.log('⏱️ 自动确认收货已关闭：AUTO_CHECK <= 0');
+    return;
+  }
+
+  const intervalMs = Math.max(Number(process.env.AUTO_CHECK_INTERVAL_MS) || 6 * 60 * 60 * 1000, 60 * 1000);
+  const run = () => {
+    autoConfirmReceivedOrders().catch((err) => {
+      console.error('自动确认收货任务失败:', err);
+    });
+  };
+
+  console.log(`⏱️ 自动确认收货已启用：发货超过 ${days} 天后确认，每 ${Math.round(intervalMs / 60000)} 分钟检查一次`);
+  run();
+  const timer = setInterval(run, intervalMs);
+  if (typeof timer.unref === 'function') timer.unref();
 };
 
 const testUpdateWechatLogisticsOrder = async ({ orderNo, waybillId, actionType }) => {
@@ -920,6 +1096,22 @@ const adminAuth = (req, res, next) => {
   return res.status(401).send({ code: -1, message: '未授权' });
 };
 
+const redeemCouponForOrder = async (order) => {
+  if (!order || !order.couponNo) return null;
+  const coupon = await CouponRecord.findOne({ where: { couponNo: order.couponNo } });
+  if (!coupon || coupon.status === 'used') return coupon;
+  if (coupon.status !== 'claimed') return coupon;
+
+  await coupon.update({
+    status: 'used',
+    usedByOpenid: order.openid || coupon.claimedByOpenid,
+    orderNo: order.orderNo,
+    discountAmount: String(order.couponAmount || '0'),
+    usedAt: new Date(),
+  });
+  return coupon;
+};
+
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'index.html'));
 });
@@ -953,6 +1145,9 @@ app.post('/api/user/auto-login', async (req, res) => {
         gender: 0,
       },
     });
+    if (!created) {
+      await user.update({ updatedAt: new Date() });
+    }
 
     res.send({
       code: 0,
@@ -963,6 +1158,200 @@ app.post('/api/user/auto-login', async (req, res) => {
     });
   } catch (err) {
     console.error('自动登录失败:', err);
+    res.send({ code: -1, message: err.message });
+  }
+});
+
+// ============ 优惠券接口 ============
+
+app.get('/api/coupon/admin/check', async (req, res) => {
+  try {
+    const openid = req.headers['x-wx-openid'] || 'local_dev_user';
+    res.send({ code: 0, data: { isAdmin: await isCouponAdmin(openid), openid } });
+  } catch (err) {
+    res.send({ code: -1, message: err.message });
+  }
+});
+
+app.post('/api/coupon/admin/create', async (req, res) => {
+  try {
+    const openid = req.headers['x-wx-openid'] || 'local_dev_user';
+    if (!(await isCouponAdmin(openid))) {
+      return res.send({ code: -1, message: '当前账号不是优惠券管理员' });
+    }
+
+    const template = getCouponTemplate(req.body?.templateType);
+    if (!template) return res.send({ code: -1, message: '未知优惠券类型' });
+
+    const coupon = await CouponRecord.create({
+      couponNo: buildCouponNo(),
+      templateType: template.templateType,
+      title: template.title,
+      status: 'generated',
+      createdByOpenid: openid,
+      meta: template,
+    });
+
+    res.send({ code: 0, data: formatCouponRecord(coupon) });
+  } catch (err) {
+    res.send({ code: -1, message: err.message });
+  }
+});
+
+app.get('/api/coupon/admin/list', async (req, res) => {
+  try {
+    const openid = req.headers['x-wx-openid'] || 'local_dev_user';
+    if (!(await isCouponAdmin(openid))) {
+      return res.send({ code: -1, message: '当前账号不是优惠券管理员' });
+    }
+
+    const coupons = await CouponRecord.findAll({ order: [['createdAt', 'DESC']] });
+    res.send({ code: 0, data: coupons.map(formatCouponRecord) });
+  } catch (err) {
+    res.send({ code: -1, message: err.message });
+  }
+});
+
+app.post('/api/coupon/admin/void', async (req, res) => {
+  try {
+    const openid = req.headers['x-wx-openid'] || 'local_dev_user';
+    if (!(await isCouponAdmin(openid))) {
+      return res.send({ code: -1, message: '当前账号不是优惠券管理员' });
+    }
+
+    const couponNo = String(req.body?.couponNo || '').trim();
+    if (!couponNo) return res.send({ code: -1, message: '缺少优惠券编号' });
+
+    const coupon = await CouponRecord.findOne({ where: { couponNo } });
+    if (!coupon) return res.send({ code: -1, message: '优惠券不存在' });
+    if (!['generated', 'claimed'].includes(coupon.status)) {
+      return res.send({ code: -1, message: '仅待认领、待使用的优惠券可以作废' });
+    }
+
+    await coupon.update({
+      status: 'expired',
+      meta: {
+        ...(coupon.meta || {}),
+        voidedByOpenid: openid,
+        voidedAt: new Date().toISOString(),
+      },
+    });
+    res.send({ code: 0, data: formatCouponRecord(coupon) });
+  } catch (err) {
+    res.send({ code: -1, message: err.message });
+  }
+});
+
+app.get('/api/coupon/detail/:couponNo', async (req, res) => {
+  try {
+    const coupon = await CouponRecord.findOne({ where: { couponNo: req.params.couponNo } });
+    if (!coupon) return res.send({ code: -1, message: '优惠券不存在' });
+    res.send({ code: 0, data: formatCouponRecord(coupon) });
+  } catch (err) {
+    res.send({ code: -1, message: err.message });
+  }
+});
+
+app.post('/api/coupon/claim', async (req, res) => {
+  try {
+    const openid = req.headers['x-wx-openid'] || 'local_dev_user';
+    const couponNo = String(req.body?.couponNo || '').trim();
+    if (!couponNo) return res.send({ code: -1, message: '缺少优惠券编号' });
+
+    const coupon = await CouponRecord.findOne({ where: { couponNo } });
+    if (!coupon) return res.send({ code: -1, message: '优惠券不存在' });
+    if (coupon.status === 'used') return res.send({ code: -1, message: '优惠券已核销' });
+    if (coupon.status === 'claimed' && coupon.claimedByOpenid && coupon.claimedByOpenid !== openid) {
+      return res.send({ code: -1, message: '优惠券已被领取' });
+    }
+    if (coupon.status === 'expired') return res.send({ code: -1, message: '优惠券已失效' });
+
+    if (coupon.status === 'generated') {
+      await coupon.update({
+        status: 'claimed',
+        claimedByOpenid: openid,
+        claimedAt: new Date(),
+      });
+    }
+
+    res.send({ code: 0, data: formatCouponRecord(coupon) });
+  } catch (err) {
+    res.send({ code: -1, message: err.message });
+  }
+});
+
+app.get('/api/coupon/list', async (req, res) => {
+  try {
+    const openid = req.headers['x-wx-openid'] || 'local_dev_user';
+    const status = String(req.query.status || 'default');
+    const where = { claimedByOpenid: openid };
+    if (status === 'default') where.status = 'claimed';
+    if (status === 'useless') where.status = 'used';
+    if (status === 'disabled') where.status = 'expired';
+
+    const coupons = await CouponRecord.findAll({
+      where,
+      order: [['claimedAt', 'DESC'], ['createdAt', 'DESC']],
+    });
+    res.send({ code: 0, data: coupons.map(formatCouponRecord) });
+  } catch (err) {
+    res.send({ code: -1, message: err.message });
+  }
+});
+
+app.get('/api/admin/coupons', adminAuth, async (req, res) => {
+  try {
+    const coupons = await CouponRecord.findAll({ order: [['createdAt', 'DESC']] });
+    res.send({ code: 0, data: coupons.map(formatCouponRecord) });
+  } catch (err) {
+    res.send({ code: -1, message: err.message });
+  }
+});
+
+app.get('/api/admin/coupon-admins', adminAuth, async (req, res) => {
+  try {
+    const admins = await AdminWhitelist.findAll({ order: [['createdAt', 'DESC']] });
+    res.send({ code: 0, data: admins });
+  } catch (err) {
+    res.send({ code: -1, message: err.message });
+  }
+});
+
+app.get('/api/admin/latest-users', adminAuth, async (req, res) => {
+  try {
+    const users = await User.findAll({
+      attributes: ['openid', 'nickName', 'avatarUrl', 'phoneNumber', 'updatedAt', 'createdAt'],
+      order: [['updatedAt', 'DESC']],
+      limit: 5,
+    });
+    res.send({ code: 0, data: users.map(formatUserInfo).map((user, index) => ({
+      ...user,
+      updatedAt: users[index].updatedAt,
+      createdAt: users[index].createdAt,
+    })) });
+  } catch (err) {
+    res.send({ code: -1, message: err.message });
+  }
+});
+
+app.post('/api/admin/coupon-admins', adminAuth, async (req, res) => {
+  try {
+    const openid = String(req.body?.openid || '').trim();
+    const remark = String(req.body?.remark || '').trim();
+    if (!openid) return res.send({ code: -1, message: '请填写 openid' });
+    await AdminWhitelist.upsert({ openid, remark });
+    const admins = await AdminWhitelist.findAll({ order: [['createdAt', 'DESC']] });
+    res.send({ code: 0, data: admins });
+  } catch (err) {
+    res.send({ code: -1, message: err.message });
+  }
+});
+
+app.delete('/api/admin/coupon-admins/:openid', adminAuth, async (req, res) => {
+  try {
+    await AdminWhitelist.destroy({ where: { openid: req.params.openid } });
+    res.send({ code: 0 });
+  } catch (err) {
     res.send({ code: -1, message: err.message });
   }
 });
@@ -1615,6 +2004,7 @@ app.post('/api/cart/delete', async (req, res) => {
 // 结算页数据（根据商品列表计算价格）
 app.post('/api/order/settle', async (req, res) => {
   try {
+    const openid = req.headers['x-wx-openid'] || 'local_dev_user';
     const { goodsRequestList = [] } = req.body;
 
     // 构造 skuDetailVos
@@ -1634,6 +2024,24 @@ app.post('/api/order/settle', async (req, res) => {
     // 计算总价
     const totalSalePrice = skuDetailVos.reduce((sum, g) => sum + g.quantity * Number(g.settlePrice), 0);
     const totalGoodsCount = skuDetailVos.reduce((sum, g) => sum + g.quantity, 0);
+    const claimedCoupons = await CouponRecord.findAll({
+      where: { claimedByOpenid: openid, status: 'claimed' },
+      order: [['claimedAt', 'ASC'], ['createdAt', 'ASC']],
+    });
+    const availableCoupons = claimedCoupons
+      .map((coupon) => ({
+        coupon,
+        amount: calculateCouponDiscount(coupon, skuDetailVos, totalSalePrice),
+      }))
+      .filter((item) => item.amount > 0);
+    const selectedCoupon = availableCoupons[0] || null;
+    const totalCouponAmount = selectedCoupon ? selectedCoupon.amount : 0;
+    const totalPayAmount = Math.max(totalSalePrice - totalCouponAmount, 1);
+    const couponList = availableCoupons.map(({ coupon, amount }, index) => ({
+      ...formatCouponRecord(coupon),
+      selected: index === 0,
+      discountAmount: String(amount),
+    }));
 
     res.send({
       code: 0,
@@ -1642,20 +2050,23 @@ app.post('/api/order/settle', async (req, res) => {
         userAddress: null,
         totalGoodsCount,
         totalAmount: totalSalePrice,
-        totalPayAmount: totalSalePrice,
+        totalPayAmount,
         totalSalePrice,
         totalDiscountAmount: 0,
         totalPromotionAmount: 0,
-        totalCouponAmount: 0,
+        totalCouponAmount,
         totalDeliveryFee: 0,
         invoiceSupport: 0,
+        selectedCoupon: selectedCoupon
+          ? { ...formatCouponRecord(selectedCoupon.coupon), discountAmount: String(selectedCoupon.amount) }
+          : null,
         storeGoodsList: [
           {
             storeId: '1',
             storeName: '立康林旗舰店',
-            storeTotalPayAmount: totalSalePrice,
+            storeTotalPayAmount: totalPayAmount,
             skuDetailVos,
-            couponList: [],
+            couponList,
           },
         ],
         inValidGoodsList: null,
@@ -2242,6 +2653,16 @@ app.post('/api/order/confirm-received', async (req, res) => {
   }
 });
 
+app.post('/api/order/auto-confirm-received/run', adminAuth, async (req, res) => {
+  try {
+    const result = await autoConfirmReceivedOrders();
+    res.send({ code: 0, data: result });
+  } catch (err) {
+    console.error('手动执行自动确认收货失败:', err);
+    res.send({ code: -1, message: err.message });
+  }
+});
+
 app.post('/api/order/wechat/msg-jump-path', adminAuth, async (req, res) => {
   try {
     const result = await setWechatOrderMsgJumpPath(req.body?.path || WECHAT_ORDER_MSG_JUMP_PATH);
@@ -2408,6 +2829,7 @@ app.post('/api/order/create', async (req, res) => {
       logisticsNo,
       logisticsCompanyCode,
       logisticsCompanyName,
+      couponNo,
     } = req.body;
     const codeOpenid = await getOpenidByCode(authorizationCode);
     const openid = headerOpenid || codeOpenid || 'local_dev_user';
@@ -2417,6 +2839,23 @@ app.post('/api/order/create', async (req, res) => {
     if (calcTotal <= 0) {
       return res.send({ code: -1, message: '订单金额异常' });
     }
+    const couponWhere = { claimedByOpenid: openid, status: 'claimed' };
+    if (couponNo) couponWhere.couponNo = String(couponNo);
+    const claimedCoupons = await CouponRecord.findAll({
+      where: couponWhere,
+      order: [['claimedAt', 'ASC'], ['createdAt', 'ASC']],
+    });
+    const selectedCoupon = claimedCoupons
+      .map((coupon) => ({
+        coupon,
+        amount: calculateCouponDiscount(coupon, goodsList, calcTotal),
+      }))
+      .find((item) => item.amount > 0);
+    const couponAmount = selectedCoupon ? selectedCoupon.amount : 0;
+    const paymentAmount = Math.max(calcTotal - couponAmount, 1);
+    const couponSnapshot = selectedCoupon
+      ? { ...formatCouponRecord(selectedCoupon.coupon), discountAmount: String(couponAmount) }
+      : null;
 
     const orderNo = 'ORD' + Date.now() + Math.random().toString(36).slice(2, 6);
 
@@ -2426,7 +2865,10 @@ app.post('/api/order/create', async (req, res) => {
       orderStatus: 5,
       orderStatusName: '待付款',
       totalAmount: String(calcTotal),
-      paymentAmount: String(calcTotal),
+      paymentAmount: String(paymentAmount),
+      couponNo: selectedCoupon ? selectedCoupon.coupon.couponNo : null,
+      couponAmount: String(couponAmount),
+      couponSnapshot,
       goodsList: goodsList, // 完整商品快照（含名称、图片、规格、单价、数量）
       userAddress: userAddress || null,
       userName: userName || '',
@@ -2445,7 +2887,7 @@ app.post('/api/order/create', async (req, res) => {
       const { payAmount, prepayId, payInfo, outTradeNo, out_trade_no } = await createWechatPrepay({
         orderNo,
         openid,
-        amount: calcTotal,
+        amount: paymentAmount,
         description: firstGoodsName || `订单${orderNo}`,
       });
       await order.update({ prepayId, paymentAmount: String(payAmount) });
@@ -2472,6 +2914,9 @@ app.post('/api/order/create', async (req, res) => {
         out_trade_no: order.orderNo,
         totalAmount: order.totalAmount,
         paymentAmount: order.paymentAmount,
+        couponNo: order.couponNo,
+        couponAmount: order.couponAmount,
+        couponSnapshot: order.couponSnapshot,
         orderStatus: order.orderStatus,
         goodsList: order.goodsList,
         ...payData,
@@ -2519,7 +2964,7 @@ app.post('/api/order/pay', async (req, res) => {
     if (isWxPayConfigured() && openid !== 'local_dev_user') {
       const goodsList = Array.isArray(order.goodsList) ? order.goodsList : [];
       const firstGoodsName = goodsList[0] && (goodsList[0].goodsName || goodsList[0].title);
-      const orderAmount = Number(order.totalAmount || order.paymentAmount || 0);
+      const orderAmount = Number(order.paymentAmount || order.totalAmount || 0);
       if (orderAmount <= 0) {
         return res.send({ code: -1, message: '订单金额异常' });
       }
@@ -2594,6 +3039,7 @@ app.post('/api/order/paid', async (req, res) => {
         transactionId: transactionId || order.transactionId || 'CLIENT_CONFIRMED',
         paidAt: order.paidAt || new Date(),
       });
+      await redeemCouponForOrder(order);
     }
 
     const afterSales = await fetchAfterSalesForOrder(order.orderNo);
@@ -2624,6 +3070,7 @@ app.post('/api/pay/wechat/notify', async (req, res) => {
         transactionId: payResult.transaction_id,
         paidAt: payResult.success_time ? new Date(payResult.success_time) : new Date(),
       });
+      await redeemCouponForOrder(order);
       console.log('✅ 微信支付成功:', order.orderNo, payResult.transaction_id);
     }
 
@@ -2663,6 +3110,7 @@ const postLocalSeed = (pathName, label) => {
 
 async function bootstrap() {
   await initDB();
+  startAutoConfirmReceivedTask();
 
   // 本地开发模式下自动插入种子数据（SQLite 内存库每次重启都是空的）
   if (!process.env.MYSQL_ADDRESS) {
