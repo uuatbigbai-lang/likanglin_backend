@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>订单管理</title>
+  <link rel="icon" href="data:,">
   <style>
     * { box-sizing: border-box; }
     body {
@@ -838,10 +839,12 @@
     }
 
     async function loadCouponTemplates() {
+      const container = $('couponTemplates');
+      if (!container) return;
       try {
         const json = await requestJson('/api/admin/coupon-templates', { headers: headers() });
         const templates = json.data || [];
-        $('couponTemplates').innerHTML = templates.length ? templates.map((item) => `
+        container.innerHTML = templates.length ? templates.map((item) => `
           <div class="mini-row">
             <div>
               <strong>${escapeHtml(item.title)} / ${escapeHtml(item.templateType)}</strong>
@@ -852,11 +855,12 @@
           </div>
         `).join('') : '<div class="empty">暂无优惠券模板</div>';
       } catch (err) {
-        $('couponTemplates').innerHTML = `<div class="empty">${escapeHtml(err.message)}</div>`;
+        container.innerHTML = `<div class="empty">${escapeHtml(err.message)}</div>`;
       }
     }
 
     async function saveCouponTemplate() {
+      if (!$('couponTemplates')) return;
       const payload = {
         templateType: $('tplType').value.trim(),
         title: $('tplTitle').value.trim(),
@@ -1058,21 +1062,23 @@
       showNotice('已填入管理员 openid，点击保存即可加入白名单');
     });
 
-    $('couponTemplates').addEventListener('click', (event) => {
-      const target = event.target.closest('[data-action="edit-template"]');
-      if (!target) return;
-      const item = JSON.parse(target.dataset.template || '{}');
-      $('tplType').value = item.templateType || '';
-      $('tplTitle').value = item.title || '';
-      $('tplRuleType').value = item.ruleType || 'discount';
-      $('tplValue').value = item.value || 0;
-      $('tplThreshold').value = item.thresholdAmount || 0;
-      $('tplMinQty').value = item.minQuantity || 0;
-      $('tplSort').value = item.sort || 0;
-      $('tplStatus').value = String(item.status ?? 1);
-      $('tplDesc').value = item.desc || '';
-      showNotice('模板已填入表单，修改后点击保存');
-    });
+    if ($('couponTemplates')) {
+      $('couponTemplates').addEventListener('click', (event) => {
+        const target = event.target.closest('[data-action="edit-template"]');
+        if (!target) return;
+        const item = JSON.parse(target.dataset.template || '{}');
+        $('tplType').value = item.templateType || '';
+        $('tplTitle').value = item.title || '';
+        $('tplRuleType').value = item.ruleType || 'discount';
+        $('tplValue').value = item.value || 0;
+        $('tplThreshold').value = item.thresholdAmount || 0;
+        $('tplMinQty').value = item.minQuantity || 0;
+        $('tplSort').value = item.sort || 0;
+        $('tplStatus').value = String(item.status ?? 1);
+        $('tplDesc').value = item.desc || '';
+        showNotice('模板已填入表单，修改后点击保存');
+      });
+    }
 
     $('ordersBody').addEventListener('change', (event) => {
       const select = event.target.closest('[data-field="expressCompany"]');
@@ -1098,8 +1104,8 @@
     $('pageSize').addEventListener('change', () => loadOrders(1));
     $('refreshOrders').addEventListener('click', () => loadOrders(state.pageNum));
     $('addCouponAdmin').addEventListener('click', saveCouponAdmin);
-    $('saveCouponTemplate').addEventListener('click', saveCouponTemplate);
-    $('refreshCouponTemplates').addEventListener('click', loadCouponTemplates);
+    if ($('saveCouponTemplate')) $('saveCouponTemplate').addEventListener('click', saveCouponTemplate);
+    if ($('refreshCouponTemplates')) $('refreshCouponTemplates').addEventListener('click', loadCouponTemplates);
     $('refreshLatestUsers').addEventListener('click', () => {
       loadLatestUsers();
       showNotice('最新登录用户已刷新');
