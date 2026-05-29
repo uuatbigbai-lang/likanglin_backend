@@ -2194,7 +2194,7 @@ app.post('/api/order/settle', async (req, res) => {
       const isUsable = amount > 0;
       return {
         ...formatted,
-        status: isUsable ? formatted.status : 'useless',
+        status: isUsable ? formatted.status : 'unavailable',
         selected: !!selectedCoupon && coupon.couponNo === selectedCoupon.coupon.couponNo,
         discountAmount: String(amount),
         unavailableReason: isUsable ? '' : getCouponUnavailableReason(coupon, skuDetailVos),
