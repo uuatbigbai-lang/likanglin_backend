@@ -1823,7 +1823,13 @@ app.post('/api/products/seed', async (req, res) => {
       }),
     ];
 
-    const cloudSeedData = seedData.map(withCloudProductPictures);
+    const cloudSeedData = seedData.map((product) =>
+      withCloudProductPictures({
+        ...product,
+        title: '上架中',
+        brief: '敬请期待',
+      })
+    );
     await Product.bulkCreate(cloudSeedData);
     res.send({ code: 0, message: '种子数据初始化成功', data: { count: cloudSeedData.length } });
   } catch (err) {
