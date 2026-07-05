@@ -2,3 +2,6 @@ node_modules/*
 .env
 certs/*
 .DS_Store
+.env_likanglin
+.env_landianhui
+.env.online.json

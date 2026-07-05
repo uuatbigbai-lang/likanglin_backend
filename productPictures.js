@@ -2,8 +2,10 @@
  * Product picture helpers.
  * 每个 SPU 的 banners/details/sku 图片统一存储在云托管文件目录，BFF 负责拼装小程序固定读取的字段。
  */
-const CLOUD_STORAGE_BASE =
-  'cloud://cloud1-d8gcvzv3307e57219.636c-cloud1-d8gcvzv3307e57219-1425492866';
+const CLOUD_STORAGE_BASE = process.env.CLOUD_STORAGE_BASE;
+if(!CLOUD_STORAGE_BASE) {
+  throw new Error('CLOUD_STORAGE_BASE is not defined in environment variables.');
+}
 const GOODS_PICTURE_CLOUD_BASE = `${CLOUD_STORAGE_BASE}/goodsPicture`;
 const HOME_BANNER_CLOUD_BASE = `${CLOUD_STORAGE_BASE}/homeBanner`;
 const HOME_ASSET_CLOUD_BASE = `${CLOUD_STORAGE_BASE}/homeAsset`;

@@ -5,7 +5,8 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "dev": "nodemon index.js",
+    "dev:landianhui": "nodemon --exec \"node --env-file=./.env_landianhui\" index.js",
+    "dev:likanglin": "nodemon --exec \"node --env-file=./.env_likanglin\" index.js",
     "upload:home-assets": "node home-assets/upload-home-assets.js",
     "upload:home-assets:local": "node home-assets/upload-home-assets.js --base http://127.0.0.1:3000"
   },
