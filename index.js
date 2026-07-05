@@ -1665,169 +1665,119 @@ app.post('/api/products/seed', async (req, res) => {
     // 清空旧数据并重新插入
     await Product.destroy({ truncate: true });
 
-    const baseProduct = {
+    const prod1 = {
       spuId: 'spu_probiotic_01',
-      title: '清畅益生菌粉（成人款）',
-      brief: '含300亿活性乳酸菌，呵护肠道微生态平衡，每天一袋，轻松享受清爽好肠道。',
+      title: '肠道健康管理益生菌',
+      brief: '',
       price: 168,
       originalPrice: 238,
-      badge: '人气爆款',
+      badge: '',
       useThumb: true,
-      bannerLength: 2,
-      detailPicLength: 2,
+      bannerLength: 3,
+      detailPicLength: 1,
       sort: 30,
       minSalePrice: 16800,
       maxSalePrice: 19800,
       maxLinePrice: 23800,
-      soldNum: 1260,
-      spuStockQuantity: 500,
+      soldNum: 113,
+      spuStockQuantity: 99999,
       isPutOnSale: 1,
       specList: [
-        {
-          specId: 'spec_01_flavor',
-          title: '口味',
-          specValueList: [
-            { specValueId: 'sv_01_original', specValue: '原味', image: '' },
-            { specValueId: 'sv_01_berry', specValue: '混合莓果味', image: '' },
-          ],
-        },
         {
           specId: 'spec_01_count',
           title: '规格',
           specValueList: [
-            { specValueId: 'sv_01_30', specValue: '30袋/盒', image: '' },
-            { specValueId: 'sv_01_60', specValue: '60袋/盒（家庭装）', image: '' },
+            { specValueId: 'package1', specValue: '一份尝试套装', image: '' },
+            { specValueId: 'package3', specValue: '三分稳固套装', image: '' },
           ],
         },
       ],
       skuList: [
         {
-          skuId: 'sku_01_01',
+          skuId: 'sku1',
           usePicture: true,
           specInfo: [
-            { specId: 'spec_01_flavor', specValueId: 'sv_01_original' },
-            { specId: 'spec_01_count', specValueId: 'sv_01_30' },
+            { specId: 'spec_01_count', specValueId: 'package1' },
           ],
           priceInfo: [
             { priceType: 1, price: '16800' },
-            { priceType: 2, price: '23800' },
           ],
-          stockInfo: { stockQuantity: 150, safeStockQuantity: 0, soldQuantity: 0 },
+          stockInfo: { stockQuantity: 9999, safeStockQuantity: 0, soldQuantity: 0 },
         },
         {
-          skuId: 'sku_01_02',
-          usePicture: false,
+          skuId: 'sku2',
+          usePicture: true,
           specInfo: [
-            { specId: 'spec_01_flavor', specValueId: 'sv_01_original' },
-            { specId: 'spec_01_count', specValueId: 'sv_01_60' },
+            { specId: 'spec_01_count', specValueId: 'package3' },
           ],
           priceInfo: [
-            { priceType: 1, price: '19800' },
-            { priceType: 2, price: '23800' },
+            { priceType: 1, price: '45000' },
           ],
-          stockInfo: { stockQuantity: 120, safeStockQuantity: 0, soldQuantity: 0 },
-        },
-        {
-          skuId: 'sku_01_03',
-          specInfo: [
-            { specId: 'spec_01_flavor', specValueId: 'sv_01_berry' },
-            { specId: 'spec_01_count', specValueId: 'sv_01_30' },
-          ],
-          priceInfo: [
-            { priceType: 1, price: '17800' },
-            { priceType: 2, price: '23800' },
-          ],
-          stockInfo: { stockQuantity: 130, safeStockQuantity: 0, soldQuantity: 0 },
-        },
-        {
-          skuId: 'sku_01_04',
-          specInfo: [
-            { specId: 'spec_01_flavor', specValueId: 'sv_01_berry' },
-            { specId: 'spec_01_count', specValueId: 'sv_01_60' },
-          ],
-          priceInfo: [
-            { priceType: 1, price: '19800' },
-            { priceType: 2, price: '23800' },
-          ],
-          stockInfo: { stockQuantity: 100, safeStockQuantity: 0, soldQuantity: 0 },
+          stockInfo: { stockQuantity: 9999, safeStockQuantity: 0, soldQuantity: 0 },
         },
       ],
     };
-
-    const cloneProduct = (overrides) => {
-      const product = {
-        ...JSON.parse(JSON.stringify(baseProduct)),
-        pictureSpuId: 'spu_probiotic_01',
-        ...overrides,
-      };
-      const skuPrices = overrides.skuPrices || [
-        product.minSalePrice,
-        product.maxSalePrice,
-        product.minSalePrice,
-        product.maxSalePrice,
-      ];
-      product.skuList = product.skuList.map((sku, index) => ({
-        ...sku,
-        priceInfo: [
-          { priceType: 1, price: String(skuPrices[index] || product.minSalePrice) },
-          { priceType: 2, price: String(product.maxLinePrice) },
-        ],
-      }));
-      delete product.skuPrices;
-      return product;
-    };
+    // const prod2 = {
+    //   spuId: 'spu_probiotic_02',
+    //   title: '肠道菌群检测',
+    //   brief: '',
+    //   price: 899,
+    //   originalPrice: 999,
+    //   badge: '',
+    //   useThumb: true,
+    //   bannerLength: 3,
+    //   detailPicLength: 1,
+    //   sort: 30,
+    //   minSalePrice: 16800,
+    //   maxSalePrice: 19800,
+    //   maxLinePrice: 23800,
+    //   soldNum: 113,
+    //   spuStockQuantity: 99999,
+    //   isPutOnSale: 1,
+    //   specList: [
+    //     {
+    //       specId: 'spec_01_count',
+    //       title: '规格',
+    //       specValueList: [
+    //         { specValueId: 'package1', specValue: '一份尝试套装', image: '' },
+    //         { specValueId: 'package3', specValue: '三分稳固套装', image: '' },
+    //       ],
+    //     },
+    //   ],
+    //   skuList: [
+    //     {
+    //       skuId: 'sku1',
+    //       usePicture: true,
+    //       specInfo: [
+    //         { specId: 'spec_01_count', specValueId: 'package1' },
+    //       ],
+    //       priceInfo: [
+    //         { priceType: 1, price: '16800' },
+    //       ],
+    //       stockInfo: { stockQuantity: 9999, safeStockQuantity: 0, soldQuantity: 0 },
+    //     },
+    //     {
+    //       skuId: 'sku2',
+    //       usePicture: true,
+    //       specInfo: [
+    //         { specId: 'spec_01_count', specValueId: 'package3' },
+    //       ],
+    //       priceInfo: [
+    //         { priceType: 1, price: '45000' },
+    //       ],
+    //       stockInfo: { stockQuantity: 9999, safeStockQuantity: 0, soldQuantity: 0 },
+    //     },
+    //   ],
+    // };
 
     const seedData = [
-      baseProduct,
-      cloneProduct({
-        spuId: 'spu_probiotic_02',
-        title: '清畅益生菌粉（儿童款）',
-        brief: '温和配方搭配多种益生元，适合儿童日常肠道养护，帮助维持肠道菌群平衡。',
-        price: 138,
-        originalPrice: 198,
-        badge: '儿童优选',
-        sort: 26,
-        minSalePrice: 13800,
-        maxSalePrice: 16800,
-        maxLinePrice: 19800,
-        soldNum: 860,
-        spuStockQuantity: 420,
-      }),
-      cloneProduct({
-        spuId: 'spu_testkit_01',
-        title: '肠道菌群检测盒（基础版）',
-        brief: '居家采样，专业检测肠道菌群状态，生成可读报告，为后续益生菌方案提供参考。',
-        price: 299,
-        originalPrice: 399,
-        badge: '检测盒',
-        sort: 24,
-        minSalePrice: 29900,
-        maxSalePrice: 29900,
-        maxLinePrice: 39900,
-        soldNum: 520,
-        spuStockQuantity: 300,
-      }),
-      cloneProduct({
-        spuId: 'spu_probiotic_03',
-        title: '舒敏益生菌粉（家庭装）',
-        brief: '家庭分享装，覆盖日常营养补充和换季肠道管理场景，适合多人持续使用。',
-        price: 218,
-        originalPrice: 298,
-        badge: '家庭装',
-        sort: 22,
-        minSalePrice: 21800,
-        maxSalePrice: 25800,
-        maxLinePrice: 29800,
-        soldNum: 680,
-        spuStockQuantity: 360,
-      }),
+      prod1,
+      // prod2,
     ];
 
     const cloudSeedData = seedData.map((product) =>
       withCloudProductPictures({
         ...product,
-        title: '上架中',
-        brief: '敬请期待',
       })
     );
     await Product.bulkCreate(cloudSeedData);
@@ -2062,7 +2012,7 @@ app.get('/api/cart/list', async (req, res) => {
         storeGoods: [
           {
             storeId: '1',
-            storeName: '立康林旗舰店',
+            storeName: '蓝点荟旗舰店',
             isSelected: isAllSelected,
             storeStockShortage: false,
             shortageGoodsList: [],
@@ -2173,7 +2123,8 @@ app.post('/api/order/settle', async (req, res) => {
       spuId: item.spuId,
       skuId: item.skuId || '',
       goodsName: item.goodsName || item.title || '',
-      image: item.primaryImage || item.thumb || '',
+      thumb: item.thumb || item.image || item.primaryImage || '',
+      image: item.thumb || item.image || item.primaryImage || '',
       quantity: item.quantity || 1,
       settlePrice: item.price || 0,
       tagPrice: null,
@@ -2228,7 +2179,7 @@ app.post('/api/order/settle', async (req, res) => {
         storeGoodsList: [
           {
             storeId: '1',
-            storeName: '立康林旗舰店',
+            storeName: '蓝点荟旗舰店',
             storeTotalPayAmount: totalPayAmount,
             skuDetailVos,
             couponList,
