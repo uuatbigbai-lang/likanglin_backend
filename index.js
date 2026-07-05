@@ -3162,6 +3162,13 @@ app.post('/api/order/create', async (req, res) => {
     });
   } catch (err) {
     console.error('创建订单失败:', err);
+    if (err.wechatRequestSummary || err.wechatHeaders || err.wechatResult) {
+      console.error('微信支付诊断信息:', {
+        requestSummary: err.wechatRequestSummary || null,
+        wechatHeaders: err.wechatHeaders || null,
+        wechatResult: err.wechatResult || null,
+      });
+    }
     res.send({ code: -1, message: err.message });
   }
 });

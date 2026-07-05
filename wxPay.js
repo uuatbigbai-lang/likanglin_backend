@@ -66,6 +66,18 @@ const readPrivateKey = () => {
   return normalizePrivateKey(process.env.WECHAT_PAY_PRIVATE_KEY || process.env.WECHAT_PAY_PRIVATE_KEY_BASE64 || '');
 };
 
+const createDigest = (value) => crypto.createHash('sha256').update(String(value || ''), 'utf8').digest('hex');
+
+const getPrivateKeyFingerprint = (privateKey) => {
+  if (!privateKey) return '';
+  try {
+    const publicKeyPem = crypto.createPublicKey(privateKey).export({ type: 'spki', format: 'pem' });
+    return createDigest(publicKeyPem).slice(0, 16);
+  } catch (err) {
+    return `invalid:${err.message}`;
+  }
+};
+
 const parseBooleanEnv = (value) => {
   if (value === undefined) return null;
   const normalized = String(value).trim().toLowerCase();
@@ -100,6 +112,17 @@ const wxPayConfig = {
   payAmountMode: readPayAmountMode(),
 };
 
+const wxPayDiagnostic = {
+  appId: wxPayConfig.appId,
+  mchId: wxPayConfig.mchId,
+  serialNo: wxPayConfig.serialNo,
+  privateKeyPath: wxPayConfig.privateKeyPath,
+  hasPrivateKey: !!wxPayConfig.privateKey,
+  privateKeyFingerprint: getPrivateKeyFingerprint(wxPayConfig.privateKey),
+  notifyUrl: wxPayConfig.notifyUrl,
+  payAmountMode: wxPayConfig.payAmountMode || '(auto)',
+};
+
 const isLocalRuntime = () => !process.env.MYSQL_ADDRESS;
 
 const isWxPayConfigured = () =>
@@ -127,6 +150,7 @@ const rsaSign = (message) =>
 if (wxPayConfig.privateKey) {
   try {
     crypto.createPrivateKey(wxPayConfig.privateKey);
+    console.log('[wxpay] config loaded:', wxPayDiagnostic);
   } catch (err) {
     console.error('微信支付商户私钥格式错误，请检查 WECHAT_PAY_PRIVATE_KEY 或 WECHAT_PAY_PRIVATE_KEY_PATH:', err.message);
   }
@@ -138,6 +162,17 @@ const requestWechatPay = (method, requestPath, body) => {
   const nonceStr = randomString();
   const message = `${method}\n${requestPath}\n${timestamp}\n${nonceStr}\n${bodyText}\n`;
   const signature = rsaSign(message);
+  const requestSummary = {
+    method,
+    requestPath,
+    timestamp,
+    nonceLength: nonceStr.length,
+    bodySha256: createDigest(bodyText).slice(0, 16),
+    bodyLength: Buffer.byteLength(bodyText),
+    mchId: wxPayConfig.mchId,
+    serialNo: wxPayConfig.serialNo,
+    privateKeyFingerprint: wxPayDiagnostic.privateKeyFingerprint,
+  };
   const authorization =
     `WECHATPAY2-SHA256-RSA2048 mchid="${wxPayConfig.mchId}",nonce_str="${nonceStr}",` +
     `signature="${signature}",timestamp="${timestamp}",serial_no="${wxPayConfig.serialNo}"`;
@@ -174,6 +209,12 @@ const requestWechatPay = (method, requestPath, body) => {
             const error = new Error(json.message || json.code || `微信支付请求失败：${res.statusCode}`);
             error.statusCode = res.statusCode;
             error.wechatResult = json;
+            error.wechatHeaders = {
+              requestId: res.headers['request-id'] || '',
+              wechatpaySerial: res.headers['wechatpay-serial'] || '',
+              date: res.headers.date || '',
+            };
+            error.wechatRequestSummary = requestSummary;
             reject(error);
           }
         });
