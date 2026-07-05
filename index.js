@@ -1774,6 +1774,7 @@ app.post('/api/products/seed', async (req, res) => {
       prod1,
       // prod2,
     ];
+    
 
     const cloudSeedData = seedData.map((product) =>
       withCloudProductPictures({
