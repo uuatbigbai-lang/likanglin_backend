@@ -9,6 +9,13 @@ if(!CLOUD_STORAGE_BASE) {
 const GOODS_PICTURE_CLOUD_BASE = `${CLOUD_STORAGE_BASE}/goodsPicture`;
 const HOME_BANNER_CLOUD_BASE = `${CLOUD_STORAGE_BASE}/homeBanner`;
 const HOME_ASSET_CLOUD_BASE = `${CLOUD_STORAGE_BASE}/homeAsset`;
+const DEFAULT_DETAIL_BANNER_HEIGHT = 750;
+const PRODUCT_DISPLAY_CONFIG = {
+  // 这款商品的 banner 原图偏高，提升详情页轮播高度以减少左右留白。
+  spu_probiotic_02: {
+    detailBannerHeight: 565,
+  },
+};
 
 const isAbsolutePicture = (value = '') => /^https?:\/\//.test(value) || String(value).startsWith('cloud://');
 const trimLeadingSlash = (value = '') => String(value).replace(/^\/+/, '');
@@ -51,9 +58,13 @@ const withCloudProductPictures = (product) => {
   const usePicture = data.usePicture === true || data.usePicture === 1;
   const thumb = useThumb ? getThumbPicture(pictureSpuId) : banners[0] || '';
   const primaryImage = banners[0] || thumb;
+  const displayConfig = PRODUCT_DISPLAY_CONFIG[data.spuId] || {};
+  const showPriceFrom = Array.isArray(data.skuList) ? data.skuList.length > 1 : false;
 
   return {
     ...data,
+    detailBannerHeight: Number(displayConfig.detailBannerHeight) || DEFAULT_DETAIL_BANNER_HEIGHT,
+    showPriceFrom,
     thumb,
     primaryImage,
     images: banners,

@@ -1717,64 +1717,45 @@ app.post('/api/products/seed', async (req, res) => {
         },
       ],
     };
-    // const prod2 = {
-    //   spuId: 'spu_probiotic_02',
-    //   title: '肠道菌群检测',
-    //   brief: '',
-    //   price: 899,
-    //   originalPrice: 999,
-    //   badge: '',
-    //   useThumb: true,
-    //   bannerLength: 3,
-    //   detailPicLength: 1,
-    //   sort: 30,
-    //   minSalePrice: 16800,
-    //   maxSalePrice: 19800,
-    //   maxLinePrice: 23800,
-    //   soldNum: 113,
-    //   spuStockQuantity: 99999,
-    //   isPutOnSale: 1,
-    //   specList: [
-    //     {
-    //       specId: 'spec_01_count',
-    //       title: '规格',
-    //       specValueList: [
-    //         { specValueId: 'package1', specValue: '一份尝试套装', image: '' },
-    //         { specValueId: 'package3', specValue: '三分稳固套装', image: '' },
-    //       ],
-    //     },
-    //   ],
-    //   skuList: [
-    //     {
-    //       skuId: 'sku1',
-    //       usePicture: true,
-    //       specInfo: [
-    //         { specId: 'spec_01_count', specValueId: 'package1' },
-    //       ],
-    //       priceInfo: [
-    //         { priceType: 1, price: '16800' },
-    //       ],
-    //       stockInfo: { stockQuantity: 9999, safeStockQuantity: 0, soldQuantity: 0 },
-    //     },
-    //     {
-    //       skuId: 'sku2',
-    //       usePicture: true,
-    //       specInfo: [
-    //         { specId: 'spec_01_count', specValueId: 'package3' },
-    //       ],
-    //       priceInfo: [
-    //         { priceType: 1, price: '45000' },
-    //       ],
-    //       stockInfo: { stockQuantity: 9999, safeStockQuantity: 0, soldQuantity: 0 },
-    //     },
-    //   ],
-    // };
+    const prod2 = {
+      spuId: 'spu_probiotic_02',
+      title: '肠道菌群检测',
+      brief: '',
+      price: 899,
+      originalPrice: 999,
+      badge: '',
+      useThumb: true,
+      bannerLength: 2,
+      detailPicLength: 1,
+      sort: 30,
+      minSalePrice: 89900,
+      maxSalePrice: 89900,
+      maxLinePrice: 99900,
+      soldNum: 162,
+      spuStockQuantity: 99999,
+      isPutOnSale: 1,
+      specList: [
+      ],
+      skuList: [
+        {
+          skuId: 'sku1',
+          usePicture: true,
+          specInfo: [
+            
+          ],
+          priceInfo: [
+            { priceType: 1, price: '89900' },
+          ],
+          stockInfo: { stockQuantity: 9999, safeStockQuantity: 0, soldQuantity: 0 },
+        },
+      ],
+    };
 
     const seedData = [
       prod1,
-      // prod2,
+      prod2,
     ];
-    
+
 
     const cloudSeedData = seedData.map((product) =>
       withCloudProductPictures({
