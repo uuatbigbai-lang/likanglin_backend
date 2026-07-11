@@ -34,6 +34,7 @@ const logger = morgan('tiny');
 
 const HOME_ASSET_DEFINITIONS = [
   { key: 'logo', label: '首页品牌 Logo' },
+  { key: 'fullLogo', label: '首页完整品牌 Logo' },
   { key: 'icon1', label: '肠道检测' },
   { key: 'icon2', label: '报告截图' },
   { key: 'icon3', label: '益生菌方案' },
@@ -1542,6 +1543,7 @@ app.post('/api/home/assets/seed', async (req, res) => {
 
     const seedData = [
       { assetKey: 'logo', label: '首页品牌 Logo', url: 'logo.png' },
+      { assetKey: 'fullLogo', label: '首页完整品牌 Logo', url: 'fullLogo.png' },
       { assetKey: 'icon1', label: '肠道检测', url: 'icons/icon1.png' },
       { assetKey: 'icon2', label: '报告截图', url: 'icons/icon2.png' },
       { assetKey: 'icon3', label: '益生菌方案', url: 'icons/icon3.png' },
@@ -1628,6 +1630,7 @@ app.get('/api/products', async (req, res) => {
         'title',
         'brief',
         'price',
+        'originalPrice',
         'badge',
         'sort',
         'useThumb',
@@ -1670,15 +1673,13 @@ app.post('/api/products/seed', async (req, res) => {
       title: '肠道健康管理益生菌',
       brief: '',
       price: 168,
-      originalPrice: 238,
       badge: '',
       useThumb: true,
-      bannerLength: 3,
+      bannerLength: 2,
       detailPicLength: 1,
       sort: 30,
       minSalePrice: 16800,
-      maxSalePrice: 19800,
-      maxLinePrice: 23800,
+      maxSalePrice: 16800,
       soldNum: 113,
       spuStockQuantity: 99999,
       isPutOnSale: 1,
@@ -1688,13 +1689,13 @@ app.post('/api/products/seed', async (req, res) => {
           title: '规格',
           specValueList: [
             { specValueId: 'package1', specValue: '一份尝试套装', image: '' },
-            { specValueId: 'package3', specValue: '三分稳固套装', image: '' },
           ],
         },
       ],
       skuList: [
         {
-          skuId: 'sku1',
+          skuId: 'spu_probiotic_01_sku1',
+          pictureSkuId: 'sku1',
           usePicture: true,
           specInfo: [
             { specId: 'spec_01_count', specValueId: 'package1' },
@@ -1704,14 +1705,35 @@ app.post('/api/products/seed', async (req, res) => {
           ],
           stockInfo: { stockQuantity: 9999, safeStockQuantity: 0, soldQuantity: 0 },
         },
+      ],
+    };
+    const prod6 = {
+      spuId: 'spu_probiotic_06',
+      title: '肠道健康管理益生菌（三份装）',
+      brief: '',
+      price: 400,
+      originalPrice: 504,
+      badge: '',
+      useThumb: true,
+      bannerLength: 2,
+      detailPicLength: 1,
+      sort: 29,
+      minSalePrice: 40000,
+      maxSalePrice: 40000,
+      maxLinePrice: 50400,
+      soldNum: 113,
+      spuStockQuantity: 99999,
+      isPutOnSale: 1,
+      specList: [],
+      skuList: [
         {
-          skuId: 'sku2',
+          skuId: 'spu_probiotic_06_sku1',
+          pictureSkuId: 'sku1',
           usePicture: true,
-          specInfo: [
-            { specId: 'spec_01_count', specValueId: 'package3' },
-          ],
+          specInfo: [],
           priceInfo: [
-            { priceType: 1, price: '45000' },
+            { priceType: 1, price: '40000' },
+            { priceType: 2, price: '50400' },
           ],
           stockInfo: { stockQuantity: 9999, safeStockQuantity: 0, soldQuantity: 0 },
         },
@@ -1738,7 +1760,8 @@ app.post('/api/products/seed', async (req, res) => {
       ],
       skuList: [
         {
-          skuId: 'sku1',
+          skuId: 'spu_probiotic_02_sku1',
+          pictureSkuId: 'sku1',
           usePicture: true,
           specInfo: [
             
@@ -1750,10 +1773,129 @@ app.post('/api/products/seed', async (req, res) => {
         },
       ],
     };
+    const prod3 = {
+      spuId: 'spu_probiotic_03',
+      title: '体重健康管理益生菌',
+      brief: '',
+      price: 298,
+      badge: '',
+      useThumb: true,
+      bannerLength: 1,
+      detailPicLength: 1,
+      sort: 30,
+      minSalePrice: 29800,
+      maxSalePrice: 29800,
+      soldNum: 162,
+      spuStockQuantity: 99999,
+      isPutOnSale: 1,
+      specList: [
+      ],
+      skuList: [
+        {
+          skuId: 'spu_probiotic_03_sku1',
+          pictureSkuId: 'sku1',
+          usePicture: true,
+          specInfo: [
+            
+          ],
+          priceInfo: [
+            { priceType: 1, price: '29800' },
+          ],
+          stockInfo: { stockQuantity: 9999, safeStockQuantity: 0, soldQuantity: 0 },
+        },
+      ],
+    };
+    const prod4 = {
+      spuId: 'spu_probiotic_04',
+      title: '情绪健康管理益生菌',
+      brief: '',
+      price: 168,
+      badge: '',
+      useThumb: true,
+      bannerLength: 3,
+      detailPicLength: 1,
+      sort: 299,
+      minSalePrice: 16800,
+      soldNum: 271,
+      spuStockQuantity: 99999,
+      isPutOnSale: 1,
+      specList: [
+        {
+          specId: 'spec_01_count',
+          title: '规格',
+          specValueList: [
+            { specValueId: 'package1', specValue: '一份尝试套装', image: '' },
+            { specValueId: 'package3', specValue: '三分稳固套装', image: '' },
+          ],
+        },
+      ],
+      skuList: [
+        {
+          skuId: 'spu_probiotic_04_sku1',
+          pictureSkuId: 'sku1',
+          usePicture: true,
+          specInfo: [
+            { specId: 'spec_01_count', specValueId: 'package1' },
+          ],
+          priceInfo: [
+            { priceType: 1, price: '16800' },
+          ],
+          stockInfo: { stockQuantity: 9999, safeStockQuantity: 0, soldQuantity: 0 },
+        },
+        {
+          skuId: 'spu_probiotic_04_sku2',
+          pictureSkuId: 'sku2',
+          usePicture: true,
+          specInfo: [
+            { specId: 'spec_01_count', specValueId: 'package3' },
+          ],
+          priceInfo: [
+            { priceType: 1, price: '45000' },
+          ],
+          stockInfo: { stockQuantity: 9999, safeStockQuantity: 0, soldQuantity: 0 },
+        },
+      ],
+    };
+    const prod5 = {
+      spuId: 'spu_probiotic_05',
+      title: '阴道菌群检测',
+      brief: '',
+      price: 1199,
+      badge: '',
+      useThumb: true,
+      bannerLength: 1,
+      detailPicLength: 1,
+      sort: 30,
+      minSalePrice: 119900,
+      maxSalePrice: 119900,
+      soldNum: 138,
+      spuStockQuantity: 99999,
+      isPutOnSale: 1,
+      specList: [
+      ],
+      skuList: [
+        {
+          skuId: 'spu_probiotic_05_sku1',
+          pictureSkuId: 'sku1',
+          usePicture: true,
+          specInfo: [
+            
+          ],
+          priceInfo: [
+            { priceType: 1, price: '119900' },
+          ],
+          stockInfo: { stockQuantity: 9999, safeStockQuantity: 0, soldQuantity: 0 },
+        },
+      ],
+    };
 
     const seedData = [
       prod1,
+      prod6,
       prod2,
+      prod3,
+      prod4,
+      prod5,
     ];
 
 

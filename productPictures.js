@@ -9,7 +9,7 @@ if(!CLOUD_STORAGE_BASE) {
 const GOODS_PICTURE_CLOUD_BASE = `${CLOUD_STORAGE_BASE}/goodsPicture`;
 const HOME_BANNER_CLOUD_BASE = `${CLOUD_STORAGE_BASE}/homeBanner`;
 const HOME_ASSET_CLOUD_BASE = `${CLOUD_STORAGE_BASE}/homeAsset`;
-const DEFAULT_DETAIL_BANNER_HEIGHT = 750;
+const DEFAULT_DETAIL_BANNER_HEIGHT = 425;
 const PRODUCT_DISPLAY_CONFIG = {
   // 这款商品的 banner 原图偏高，提升详情页轮播高度以减少左右留白。
   spu_probiotic_02: {
@@ -46,6 +46,19 @@ const getSkuPicture = (spuId, skuId) => {
 
 const getThumbPicture = (spuId) => getProductPicture(spuId, 'thumb.png');
 
+const parseMoneyInt = (value) => {
+  const amount = Number(value);
+  return Number.isFinite(amount) ? Math.round(amount) : 0;
+};
+
+const getSkuSalePrices = (skuList = []) => (
+  Array.isArray(skuList)
+    ? skuList
+      .map((sku) => parseMoneyInt(sku?.priceInfo?.[0]?.price))
+      .filter((price) => price > 0)
+    : []
+);
+
 const withCloudProductPictures = (product) => {
   const data = product && typeof product.toJSON === 'function' ? product.toJSON() : { ...product };
   if (!data.spuId) return data;
@@ -60,18 +73,31 @@ const withCloudProductPictures = (product) => {
   const primaryImage = banners[0] || thumb;
   const displayConfig = PRODUCT_DISPLAY_CONFIG[data.spuId] || {};
   const showPriceFrom = Array.isArray(data.skuList) ? data.skuList.length > 1 : false;
+  const skuSalePrices = getSkuSalePrices(data.skuList);
+  const fallbackSalePrice = parseMoneyInt(data.price) > 0 ? parseMoneyInt(data.price) * 100 : 0;
+  const minSalePrice = parseMoneyInt(data.minSalePrice) || skuSalePrices[0] || fallbackSalePrice;
+  const maxSalePrice = parseMoneyInt(data.maxSalePrice) || skuSalePrices[skuSalePrices.length - 1] || minSalePrice;
+  const maxLinePrice = parseMoneyInt(data.maxLinePrice)
+    || (parseMoneyInt(data.originalPrice) > 0 ? parseMoneyInt(data.originalPrice) * 100 : 0);
 
   return {
     ...data,
-    detailBannerHeight: Number(displayConfig.detailBannerHeight) || DEFAULT_DETAIL_BANNER_HEIGHT,
+    detailBannerHeight: displayConfig.detailBannerHeight
+      ? Number(displayConfig.detailBannerHeight)
+      : DEFAULT_DETAIL_BANNER_HEIGHT,
     showPriceFrom,
+    minSalePrice,
+    maxSalePrice,
+    maxLinePrice,
     thumb,
     primaryImage,
     images: banners,
     skuList: Array.isArray(data.skuList)
       ? data.skuList.map((sku) => ({
           ...sku,
-          skuImage: usePicture || sku.usePicture ? getSkuPicture(pictureSpuId, sku.skuId) : primaryImage,
+          skuImage: usePicture || sku.usePicture
+            ? getSkuPicture(pictureSpuId, sku.pictureSkuId || sku.skuId)
+            : primaryImage,
         }))
       : data.skuList,
     desc: getProductDetails(pictureSpuId, detailCount),
