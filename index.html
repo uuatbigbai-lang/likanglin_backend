@@ -20,10 +20,24 @@
     }
     .topbar {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) 260px;
+      grid-template-columns: minmax(0, 1fr) minmax(240px, 320px);
       gap: 20px;
       align-items: end;
       margin-bottom: 18px;
+    }
+    .auth-actions {
+      display: flex;
+      gap: 10px;
+      justify-content: flex-end;
+    }
+    .auth-status {
+      padding: 10px 12px;
+      border: 1px solid #dbe6f3;
+      border-radius: 6px;
+      background: #f8fbff;
+      color: #1f5f9f;
+      font-size: 13px;
+      line-height: 20px;
     }
     h1 {
       margin: 0;
@@ -394,9 +408,11 @@
         <h1>订单管理</h1>
         <p class="muted">进入页面自动加载订单。待发货订单可在列表中直接展开并同步微信发货信息。</p>
       </div>
-      <div>
-        <label for="adminToken">管理 Token</label>
-        <input id="adminToken" type="password" autocomplete="off" placeholder="未配置 ADMIN_TOKEN 可留空">
+      <div class="panel admin-card">
+        <div id="authStatus" class="auth-status">正在校验登录状态...</div>
+        <div class="auth-actions" style="margin-top:10px">
+          <button id="adminLogout" class="subtle" type="button">退出登录</button>
+        </div>
       </div>
     </header>
 
@@ -578,8 +594,11 @@
       expandedOrderNo: '',
       loading: false,
       paymentEditor: null,
+      authToken: '',
+      adminProfile: null,
     };
     const $ = (id) => document.getElementById(id);
+    const AUTH_STORAGE_KEY = 'admin-auth-v1';
 
     const expressNameMap = {
       SF: '顺丰速运',
@@ -594,10 +613,45 @@
     };
 
     function headers() {
-      const token = $('adminToken').value.trim();
       const result = { 'Content-Type': 'application/json' };
-      if (token) result['x-admin-token'] = token;
+      if (state.authToken) result['x-admin-token'] = state.authToken;
       return result;
+    }
+
+    function setAuth(token, account) {
+      state.authToken = String(token || '');
+      state.adminProfile = account || null;
+      localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({
+        token: state.authToken,
+        account: state.adminProfile,
+      }));
+      updateAuthUI();
+    }
+
+    function clearAuth() {
+      state.authToken = '';
+      state.adminProfile = null;
+      localStorage.removeItem(AUTH_STORAGE_KEY);
+      updateAuthUI();
+    }
+
+    function updateAuthUI() {
+      const status = $('authStatus');
+      if (state.adminProfile) {
+        status.textContent = `已登录：${state.adminProfile.displayName || state.adminProfile.username} / ${state.adminProfile.roleType || 'sales'}`;
+      } else {
+        status.textContent = '未登录';
+      }
+      $('adminLogout').disabled = !state.authToken;
+    }
+
+    function ensureAuthenticated() {
+      if (state.authToken) return true;
+      return false;
+    }
+
+    function redirectToLogin() {
+      window.location.replace('/admin');
     }
 
     function showNotice(message, isError = false) {
@@ -644,10 +698,45 @@
     async function requestJson(url, options = {}) {
       const response = await fetch(url, options);
       const json = await response.json().catch(() => ({}));
+      if (response.status === 401) {
+        clearAuth();
+        redirectToLogin();
+      }
       if (!response.ok || json.code !== 0) {
         throw new Error(json.message || `请求失败：${response.status}`);
       }
       return json;
+    }
+
+    async function restoreAdminAuth() {
+      const raw = localStorage.getItem(AUTH_STORAGE_KEY);
+      if (!raw) {
+        updateAuthUI();
+        redirectToLogin();
+        return;
+      }
+      try {
+        const stored = JSON.parse(raw);
+        state.authToken = String(stored?.token || '');
+        state.adminProfile = stored?.account || null;
+        updateAuthUI();
+        const json = await requestJson('/api/admin/me', { headers: headers() });
+        state.adminProfile = json.data || state.adminProfile;
+        updateAuthUI();
+        await loadDashboard();
+      } catch (err) {
+        clearAuth();
+        redirectToLogin();
+      }
+    }
+
+    async function loadDashboard() {
+      if (!ensureAuthenticated()) return;
+      await loadOrders(1);
+      loadCouponAdmins();
+      loadLatestUsers();
+      loadCouponRecords();
+      loadCouponTemplates();
     }
 
     function orderStatusClass(order) {
@@ -819,6 +908,7 @@
     }
 
     async function loadOrders(pageNum = state.pageNum) {
+      if (!ensureAuthenticated()) return;
       state.loading = true;
       $('refreshOrders').disabled = true;
       $('ordersBody').innerHTML = '<tr><td colspan="7" class="empty">正在加载订单...</td></tr>';
@@ -868,6 +958,7 @@
     }
 
     async function loadCouponAdmins() {
+      if (!ensureAuthenticated()) return;
       try {
         const json = await requestJson('/api/admin/coupon-admins', { headers: headers() });
         const admins = json.data || [];
@@ -886,6 +977,7 @@
     }
 
     async function loadLatestUsers() {
+      if (!ensureAuthenticated()) return;
       const button = $('refreshLatestUsers');
       if (button) button.disabled = true;
       try {
@@ -915,6 +1007,7 @@
     }
 
     async function loadCouponRecords() {
+      if (!ensureAuthenticated()) return;
       try {
         const json = await requestJson('/api/admin/coupons', { headers: headers() });
         const records = json.data || [];
@@ -945,6 +1038,7 @@
     async function loadCouponTemplates() {
       const container = $('couponTemplates');
       if (!container) return;
+      if (!ensureAuthenticated()) return;
       try {
         const json = await requestJson('/api/admin/coupon-templates', { headers: headers() });
         const templates = json.data || [];
@@ -965,6 +1059,7 @@
 
     async function saveCouponTemplate() {
       if (!$('couponTemplates')) return;
+      if (!ensureAuthenticated()) return;
       const payload = {
         templateType: $('tplType').value.trim(),
         title: $('tplTitle').value.trim(),
@@ -990,6 +1085,7 @@
     }
 
     async function updateOrderPaymentAmount(orderNo, currentAmount) {
+      if (!ensureAuthenticated()) return;
       const value = $('paymentModalInput').value.trim();
       const amount = Math.round(Number(value) * 100);
       if (!Number.isFinite(amount) || amount <= 0) {
@@ -1016,6 +1112,7 @@
     }
 
     async function saveCouponAdmin() {
+      if (!ensureAuthenticated()) return;
       const openid = $('couponAdminOpenid').value.trim();
       const remark = $('couponAdminRemark').value.trim();
       if (!openid) {
@@ -1038,6 +1135,7 @@
     }
 
     async function shipOrder(orderNo) {
+      if (!ensureAuthenticated()) return;
       const form = Array.from(document.querySelectorAll('[data-ship-form]'))
         .find((node) => node.dataset.shipForm === orderNo);
       if (!form) return;
@@ -1076,6 +1174,7 @@
     }
 
     async function startReturn(orderNo) {
+      if (!ensureAuthenticated()) return;
       const reason = window.prompt(`请输入退货备注（可留空）\n订单：${orderNo}`, '客户申请退货');
       if (reason === null) return;
       if (!window.confirm(`确认将订单 ${orderNo} 改为“退货中”？`)) return;
@@ -1094,6 +1193,7 @@
     }
 
     async function refundOrder(orderNo, currentAmount) {
+      if (!ensureAuthenticated()) return;
       const currentYuan = (Number(currentAmount || 0) / 100).toFixed(2);
       const value = window.prompt(`请输入退款金额（元）\n订单：${orderNo}`, currentYuan);
       if (value === null) return;
@@ -1142,8 +1242,9 @@
         refundOrder(orderNo, target.dataset.paymentAmount);
       }
       if (action === 'view') {
+        if (!ensureAuthenticated()) return;
         state.expandedOrderNo = '';
-        window.open(`/api/admin/order/${encodeURIComponent(orderNo)}${$('adminToken').value ? `?token=${encodeURIComponent($('adminToken').value.trim())}` : ''}`, '_blank');
+        window.open(`/api/admin/order/${encodeURIComponent(orderNo)}${state.authToken ? `?token=${encodeURIComponent(state.authToken)}` : ''}`, '_blank');
       }
     });
 
@@ -1239,19 +1340,12 @@
     });
     $('prevPage').addEventListener('click', () => loadOrders(Math.max(1, state.pageNum - 1)));
     $('nextPage').addEventListener('click', () => loadOrders(state.pageNum + 1));
-    $('adminToken').addEventListener('change', () => {
-      loadOrders(1);
-      loadCouponAdmins();
-      loadLatestUsers();
-      loadCouponRecords();
-      loadCouponTemplates();
+    $('adminLogout').addEventListener('click', () => {
+      clearAuth();
+      redirectToLogin();
     });
 
-    loadOrders(1);
-    loadCouponAdmins();
-    loadLatestUsers();
-    loadCouponRecords();
-    loadCouponTemplates();
+    restoreAdminAuth();
   </script>
 </body>
 </html>

@@ -19,6 +19,7 @@ const {
   Sample,
   HomeAsset,
   HomeBanner,
+  AdminAccount,
 } = require('./db');
 const { withCloudHomeAssetPicture, withCloudHomeBannerPicture, withCloudProductPictures } = require('./productPictures');
 const {
@@ -29,6 +30,11 @@ const {
   getOpenidByCode,
   decryptNotifyResource,
 } = require('./wxPay');
+const {
+  createAdminAuth,
+  registerAdminAuthRoutes,
+  buildSeedAdminAccounts,
+} = require('./adminAuth');
 
 const logger = morgan('tiny');
 
@@ -1192,15 +1198,7 @@ app.use(express.json({
 app.use(cors());
 app.use(logger);
 
-const adminAuth = (req, res, next) => {
-  const token = process.env.ADMIN_TOKEN || '';
-  if (!token) return next();
-
-  const requestToken = req.headers['x-admin-token'] || req.query.token || (req.body && req.body.token);
-  if (requestToken === token) return next();
-
-  return res.status(401).send({ code: -1, message: '未授权' });
-};
+const adminAuth = createAdminAuth({ AdminAccount });
 
 const redeemCouponForOrder = async (order) => {
   if (!order || !order.couponNo) return null;
@@ -1219,12 +1217,17 @@ const redeemCouponForOrder = async (order) => {
 };
 
 app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'index.html'));
+  res.sendFile(path.join(__dirname, 'login.html'));
 });
 
 app.get('/admin', (req, res) => {
+  res.sendFile(path.join(__dirname, 'login.html'));
+});
+
+app.get('/admin/dashboard', (req, res) => {
   res.sendFile(path.join(__dirname, 'index.html'));
 });
+registerAdminAuthRoutes({ app, AdminAccount, adminAuth });
 
 // 小程序调用，获取微信 Open ID
 app.get('/api/wx_openid', async (req, res) => {
@@ -1551,7 +1554,7 @@ app.post('/api/home/assets/seed', async (req, res) => {
       {
         assetKey: 'aboutDescription',
         label: '首页关于我们文案',
-        content: '蓝点荟定位为「检测 + 干预」闭环肠道微生态健康管理平台。我们希望每一次益生菌干预都不再是随便试试，而是从肠道菌群检测、报告解读到个性化方案推荐，帮你建立自己的肠道健康标准。',
+        content: '蓝点荟大健康管理（上海）有限公司是国内领先的科技驱动型健康管理整合平台，致力于通过"检测-干预-管理"全流程闭环，为客户提供全生命周期的精准健康管理服务。平台以肠道微生态调控和心血管早筛为核心切入点，整合全球优质健康科技资源，构建覆盖预防、诊断、干预的一站式解决方案。',
       },
       { assetKey: 'icon1', label: '肠道检测', url: 'icons/icon1.png' },
       { assetKey: 'icon2', label: '报告截图', url: 'icons/icon2.png' },
@@ -1562,6 +1565,29 @@ app.post('/api/home/assets/seed', async (req, res) => {
 
     await HomeAsset.bulkCreate(seedData);
     res.send({ code: 0, message: '首页资产种子数据初始化成功', data: { count: seedData.length } });
+  } catch (err) {
+    res.send({ code: -1, message: err.message });
+  }
+});
+
+app.post('/api/admin/accounts/seed', async (req, res) => {
+  try {
+    await AdminAccount.destroy({ truncate: true });
+    const seedAccounts = buildSeedAdminAccounts();
+
+    await AdminAccount.bulkCreate(seedAccounts);
+    res.send({
+      code: 0,
+      message: '后台账号种子数据初始化成功',
+      data: {
+        count: seedAccounts.length,
+        accounts: seedAccounts.map((item) => ({
+          username: item.username,
+          roleType: item.roleType,
+          displayName: item.displayName,
+        })),
+      },
+    });
   } catch (err) {
     res.send({ code: -1, message: err.message });
   }
@@ -1686,7 +1712,7 @@ app.post('/api/products/seed', async (req, res) => {
       useThumb: true,
       bannerLength: 2,
       detailPicLength: 1,
-      sort: 30,
+      sort: 300,
       minSalePrice: 16800,
       maxSalePrice: 16800,
       soldNum: 113,
@@ -1718,7 +1744,7 @@ app.post('/api/products/seed', async (req, res) => {
     };
     const prod6 = {
       spuId: 'spu_probiotic_06',
-      title: '肠道健康管理益生菌（三份装）',
+      title: '肠道健康管理益生菌（三份装·8折）',
       brief: '',
       price: 400,
       originalPrice: 504,
@@ -1854,7 +1880,7 @@ app.post('/api/products/seed', async (req, res) => {
     };
     const prod7 = {
       spuId: 'spu_probiotic_07',
-      title: '情绪健康管理益生菌（三份装）',
+      title: '情绪健康管理益生菌（三份装·8折）',
       brief: '',
       price: 400,
       originalPrice: 504,
@@ -1973,45 +1999,40 @@ app.post('/api/products/seed', async (req, res) => {
   }
 });
 
-// 初始化全部种子数据（强制重置）：商品 + 首页资产 + 首页 Banner
+const runAllSeeds = async () => {
+  const steps = [
+    { name: 'products', path: '/api/products/seed' },
+    { name: 'adminAccounts', path: '/api/admin/accounts/seed' },
+    { name: 'homeAssets', path: '/api/home/assets/seed' },
+    { name: 'homeBanners', path: '/api/home/banners/seed' },
+  ];
+  const results = [];
+
+  for (const step of steps) {
+    const result = await postLocalJson(step.path);
+    if (!result || result.code !== 0) {
+      throw new Error(`${step.name} seed failed: ${result?.message || 'unknown error'}`);
+    }
+    results.push({ name: step.name, result });
+  }
+
+  return results;
+};
+
+// 初始化全部种子数据（强制重置）：商品 + 后台账号 + 首页资产 + 首页 Banner
 app.post('/api/seed', async (req, res) => {
   try {
-    const steps = [
-      { name: 'products', path: '/api/products/seed' },
-      { name: 'homeAssets', path: '/api/home/assets/seed' },
-      { name: 'homeBanners', path: '/api/home/banners/seed' },
-    ];
-    const results = [];
-
-    for (const step of steps) {
-      const result = await postLocalJson(step.path);
-      if (!result || result.code !== 0) {
-        throw new Error(`${step.name} seed failed: ${result?.message || 'unknown error'}`);
-      }
-      results.push({ name: step.name, result });
-    }
-
+    const results = await runAllSeeds();
     res.send({ code: 0, message: '全部种子数据初始化成功', data: results });
   } catch (err) {
     res.send({ code: -1, message: err.message });
   }
 });
 
-// 兼容更语义化的路径
+// 更语义化的主路径
 app.post('/api/seed/all', async (req, res) => {
   try {
-    const results = [];
-    for (const step of [
-      { name: 'products', path: '/api/products/seed' },
-      { name: 'homeAssets', path: '/api/home/assets/seed' },
-      { name: 'homeBanners', path: '/api/home/banners/seed' },
-    ]) {
-      const result = await postLocalJson(step.path);
-      if (!result || result.code !== 0) {
-        throw new Error(`${step.name} seed failed: ${result?.message || 'unknown error'}`);
-      }
-      results.push({ name: step.name, result });
-    }
+    const results = await runAllSeeds();
     res.send({ code: 0, message: '全部种子数据初始化成功', data: results });
   } catch (err) {
     res.send({ code: -1, message: err.message });
@@ -3546,14 +3567,18 @@ async function bootstrap() {
   // 本地开发模式下自动插入种子数据（SQLite 内存库每次重启都是空的）
   if (!process.env.MYSQL_ADDRESS) {
     const productCount = await Product.count();
+    const adminAccountCount = await AdminAccount.count();
     const assetCount = await HomeAsset.count();
     const bannerCount = await HomeBanner.count();
-    if (productCount === 0 || assetCount === 0 || bannerCount === 0) {
+    if (productCount === 0 || adminAccountCount === 0 || assetCount === 0 || bannerCount === 0) {
       console.log('🌱 本地模式：自动插入种子数据...');
       app.listen(port, () => {
         console.log('启动成功', port);
         if (productCount === 0) {
           postLocalSeed('/api/products/seed', '商品种子数据');
+        }
+        if (adminAccountCount === 0) {
+          postLocalSeed('/api/admin/accounts/seed', '后台账号种子数据');
         }
         if (assetCount === 0) {
           postLocalSeed('/api/home/assets/seed', '首页资产种子数据');

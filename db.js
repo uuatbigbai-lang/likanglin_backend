@@ -783,6 +783,43 @@ const HomeBanner = sequelize.define("HomeBanner", {
   },
 });
 
+const AdminAccount = sequelize.define("AdminAccount", {
+  username: {
+    type: DataTypes.STRING(64),
+    allowNull: false,
+    unique: true,
+    comment: "后台登录账号",
+  },
+  passwordHash: {
+    type: DataTypes.STRING(128),
+    allowNull: false,
+    comment: "密码哈希",
+  },
+  passwordSalt: {
+    type: DataTypes.STRING(64),
+    allowNull: false,
+    comment: "密码盐",
+  },
+  roleType: {
+    type: DataTypes.STRING(32),
+    allowNull: false,
+    defaultValue: "sales",
+    comment: "身份类型：admin/sales/other",
+  },
+  displayName: {
+    type: DataTypes.STRING(80),
+    allowNull: false,
+    defaultValue: "",
+    comment: "显示名称",
+  },
+  status: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    defaultValue: 1,
+    comment: "状态：1启用 0禁用",
+  },
+});
+
 const syncModels = [
   Counter,
   User,
@@ -797,6 +834,7 @@ const syncModels = [
   Sample,
   HomeAsset,
   HomeBanner,
+  AdminAccount,
 ];
 
 async function ensureColumn(tableName, columnName, definition) {
@@ -888,4 +926,5 @@ module.exports = {
   Sample,
   HomeAsset,
   HomeBanner,
+  AdminAccount,
 };

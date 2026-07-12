@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>后台登录</title>
+  <link rel="icon" href="data:,">
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      background:
+        radial-gradient(circle at top left, rgba(36, 114, 200, 0.18), transparent 30%),
+        linear-gradient(180deg, #f5f9ff 0%, #eef4fb 48%, #f8fafc 100%);
+      color: #172033;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    .card {
+      width: min(100%, 420px);
+      padding: 28px;
+      border: 1px solid #e4e7ec;
+      border-radius: 16px;
+      background: rgba(255, 255, 255, 0.94);
+      box-shadow: 0 20px 60px rgba(16, 24, 40, 0.10);
+      backdrop-filter: blur(10px);
+    }
+    h1 {
+      margin: 0 0 8px;
+      font-size: 28px;
+      line-height: 36px;
+    }
+    .muted {
+      margin: 0 0 22px;
+      color: #667085;
+      font-size: 14px;
+      line-height: 22px;
+    }
+    label {
+      display: block;
+      margin-bottom: 6px;
+      color: #344054;
+      font-size: 13px;
+      line-height: 20px;
+      font-weight: 700;
+    }
+    input {
+      width: 100%;
+      min-height: 44px;
+      margin-bottom: 14px;
+      border: 1px solid #d0d5dd;
+      border-radius: 10px;
+      padding: 10px 12px;
+      background: #fff;
+      color: #172033;
+      font-size: 14px;
+      outline: none;
+    }
+    input:focus {
+      border-color: #2472c8;
+      box-shadow: 0 0 0 3px rgba(36, 114, 200, 0.12);
+    }
+    button {
+      width: 100%;
+      min-height: 46px;
+      border: 0;
+      border-radius: 10px;
+      padding: 0 16px;
+      background: linear-gradient(135deg, #2472c8, #1f5f9f);
+      color: #fff;
+      font-size: 15px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    button:disabled {
+      cursor: not-allowed;
+      opacity: 0.55;
+    }
+    .notice {
+      display: none;
+      margin-top: 14px;
+      padding: 10px 12px;
+      border-radius: 10px;
+      background: #ecfdf3;
+      color: #027a48;
+      font-size: 14px;
+      line-height: 22px;
+      white-space: pre-wrap;
+    }
+    .notice.error {
+      background: #fef3f2;
+      color: #b42318;
+    }
+    .notice.show {
+      display: block;
+    }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <h1>后台登录</h1>
+    <p class="muted">使用数据库中的后台账号密码登录，登录成功后进入订单管理页。</p>
+    <label for="adminUsername">账号</label>
+    <input id="adminUsername" type="text" autocomplete="username" placeholder="请输入后台账号">
+    <label for="adminPassword">密码</label>
+    <input id="adminPassword" type="password" autocomplete="current-password" placeholder="请输入密码">
+    <button id="adminLogin" type="button">登录后台</button>
+    <div id="notice" class="notice"></div>
+  </main>
+
+  <script>
+    const AUTH_STORAGE_KEY = 'admin-auth-v1';
+    const $ = (id) => document.getElementById(id);
+
+    function showNotice(message, isError = false) {
+      const notice = $('notice');
+      notice.textContent = message;
+      notice.className = `notice show${isError ? ' error' : ''}`;
+    }
+
+    async function requestJson(url, options = {}) {
+      const response = await fetch(url, options);
+      const json = await response.json().catch(() => ({}));
+      if (!response.ok || json.code !== 0) {
+        throw new Error(json.message || `请求失败：${response.status}`);
+      }
+      return json;
+    }
+
+    async function restoreAndRedirect() {
+      const raw = localStorage.getItem(AUTH_STORAGE_KEY);
+      if (!raw) return;
+      try {
+        const stored = JSON.parse(raw);
+        const token = String(stored?.token || '');
+        if (!token) return;
+        await requestJson('/api/admin/me', {
+          headers: {
+            'Content-Type': 'application/json',
+            'x-admin-token': token,
+          },
+        });
+        window.location.replace('/admin/dashboard');
+      } catch (err) {
+        localStorage.removeItem(AUTH_STORAGE_KEY);
+      }
+    }
+
+    async function loginAdmin() {
+      const username = $('adminUsername').value.trim();
+      const password = $('adminPassword').value;
+      if (!username || !password) {
+        showNotice('请输入账号和密码', true);
+        return;
+      }
+      $('adminLogin').disabled = true;
+      try {
+        const json = await requestJson('/api/admin/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password }),
+        });
+        localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({
+          token: json.data.token,
+          account: json.data.account,
+        }));
+        showNotice(`登录成功，正在进入管理页...`);
+        window.location.replace('/admin/dashboard');
+      } catch (err) {
+        showNotice(err.message, true);
+      } finally {
+        $('adminLogin').disabled = false;
+      }
+    }
+
+    $('adminLogin').addEventListener('click', loginAdmin);
+    $('adminPassword').addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') loginAdmin();
+    });
+
+    restoreAndRedirect();
+  </script>
+</body>
+</html>
