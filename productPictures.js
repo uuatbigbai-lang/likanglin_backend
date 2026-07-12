@@ -12,7 +12,7 @@ const HOME_ASSET_CLOUD_BASE = `${CLOUD_STORAGE_BASE}/homeAsset`;
 const DEFAULT_DETAIL_BANNER_HEIGHT = 425;
 const PRODUCT_DISPLAY_CONFIG = {
   // 这款商品的 banner 原图偏高，提升详情页轮播高度以减少左右留白。
-  spu_probiotic_02: {
+  spu_probiotic_08: {
     detailBannerHeight: 565,
   },
 };

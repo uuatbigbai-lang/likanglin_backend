@@ -35,6 +35,7 @@ const logger = morgan('tiny');
 const HOME_ASSET_DEFINITIONS = [
   { key: 'logo', label: '首页品牌 Logo' },
   { key: 'fullLogo', label: '首页完整品牌 Logo' },
+  { key: 'aboutDescription', label: '首页关于我们文案' },
   { key: 'icon1', label: '肠道检测' },
   { key: 'icon2', label: '报告截图' },
   { key: 'icon3', label: '益生菌方案' },
@@ -51,6 +52,7 @@ const formatHomeAsset = (asset) => {
     key: data.assetKey,
     label: data.label || '',
     url: data.url || '',
+    content: data.content || '',
     updatedAt: data.updatedAt,
   };
 };
@@ -291,17 +293,19 @@ const saveHomeAsset = async (req, res) => {
       return res.send({ code: -1, message: '无效的资源 key' });
     }
 
-    const { label, url, fileName, imageUrl } = req.body || {};
+    const { label, url, fileName, imageUrl, content } = req.body || {};
     const assetFile = String(fileName || imageUrl || url || '').trim();
+    const assetContent = String(content || '').trim();
     const preset = HOME_ASSET_DEFINITIONS.find((item) => item.key === assetKey);
-    if (!assetFile) {
-      return res.send({ code: -1, message: '请提供 url、imageUrl 或 fileName' });
+    if (!assetFile && !assetContent) {
+      return res.send({ code: -1, message: '请提供 url、imageUrl、fileName 或 content' });
     }
 
     await HomeAsset.upsert({
       assetKey,
       label: String(label || preset?.label || assetKey).trim(),
       url: assetFile,
+      content: assetContent,
     });
     const saved = await HomeAsset.findOne({ where: { assetKey } });
     res.send({ code: 0, data: formatHomeAsset(saved) });
@@ -1544,6 +1548,11 @@ app.post('/api/home/assets/seed', async (req, res) => {
     const seedData = [
       { assetKey: 'logo', label: '首页品牌 Logo', url: 'logo.png' },
       { assetKey: 'fullLogo', label: '首页完整品牌 Logo', url: 'fullLogo.png' },
+      {
+        assetKey: 'aboutDescription',
+        label: '首页关于我们文案',
+        content: '蓝点荟定位为「检测 + 干预」闭环肠道微生态健康管理平台。我们希望每一次益生菌干预都不再是随便试试，而是从肠道菌群检测、报告解读到个性化方案推荐，帮你建立自己的肠道健康标准。',
+      },
       { assetKey: 'icon1', label: '肠道检测', url: 'icons/icon1.png' },
       { assetKey: 'icon2', label: '报告截图', url: 'icons/icon2.png' },
       { assetKey: 'icon3', label: '益生菌方案', url: 'icons/icon3.png' },
@@ -1744,7 +1753,6 @@ app.post('/api/products/seed', async (req, res) => {
       title: '肠道菌群检测',
       brief: '',
       price: 899,
-      originalPrice: 999,
       badge: '',
       useThumb: true,
       bannerLength: 2,
@@ -1816,6 +1824,7 @@ app.post('/api/products/seed', async (req, res) => {
       detailPicLength: 1,
       sort: 299,
       minSalePrice: 16800,
+      maxSalePrice: 16800,
       soldNum: 271,
       spuStockQuantity: 99999,
       isPutOnSale: 1,
@@ -1825,7 +1834,6 @@ app.post('/api/products/seed', async (req, res) => {
           title: '规格',
           specValueList: [
             { specValueId: 'package1', specValue: '一份尝试套装', image: '' },
-            { specValueId: 'package3', specValue: '三分稳固套装', image: '' },
           ],
         },
       ],
@@ -1842,15 +1850,35 @@ app.post('/api/products/seed', async (req, res) => {
           ],
           stockInfo: { stockQuantity: 9999, safeStockQuantity: 0, soldQuantity: 0 },
         },
+      ],
+    };
+    const prod7 = {
+      spuId: 'spu_probiotic_07',
+      title: '情绪健康管理益生菌（三份装）',
+      brief: '',
+      price: 400,
+      originalPrice: 504,
+      badge: '',
+      useThumb: true,
+      bannerLength: 3,
+      detailPicLength: 1,
+      sort: 0,
+      minSalePrice: 40000,
+      maxSalePrice: 40000,
+      maxLinePrice: 50400,
+      soldNum: 271,
+      spuStockQuantity: 99999,
+      isPutOnSale: 1,
+      specList: [],
+      skuList: [
         {
-          skuId: 'spu_probiotic_04_sku2',
-          pictureSkuId: 'sku2',
+          skuId: 'spu_probiotic_07_sku1',
+          pictureSkuId: 'sku1',
           usePicture: true,
-          specInfo: [
-            { specId: 'spec_01_count', specValueId: 'package3' },
-          ],
+          specInfo: [],
           priceInfo: [
-            { priceType: 1, price: '45000' },
+            { priceType: 1, price: '40000' },
+            { priceType: 2, price: '50400' },
           ],
           stockInfo: { stockQuantity: 9999, safeStockQuantity: 0, soldQuantity: 0 },
         },
@@ -1888,6 +1916,38 @@ app.post('/api/products/seed', async (req, res) => {
         },
       ],
     };
+    const prod8 = {
+      spuId: 'spu_probiotic_08',
+      title: '肠道菌群检测套装',
+      brief: '',
+      price: 1788,
+      badge: '',
+      useThumb: true,
+      bannerLength: 1,
+      detailPicLength: 1,
+      sort: 1,
+      minSalePrice: 178800,
+      maxSalePrice: 178800,
+      soldNum: 102,
+      spuStockQuantity: 99999,
+      isPutOnSale: 1,
+      specList: [
+      ],
+      skuList: [
+        {
+          skuId: 'spu_probiotic_05_sku1',
+          pictureSkuId: 'sku1',
+          usePicture: true,
+          specInfo: [
+            
+          ],
+          priceInfo: [
+            { priceType: 1, price: '178800' },
+          ],
+          stockInfo: { stockQuantity: 9999, safeStockQuantity: 0, soldQuantity: 0 },
+        },
+      ],
+    };
 
     const seedData = [
       prod1,
@@ -1895,7 +1955,9 @@ app.post('/api/products/seed', async (req, res) => {
       prod2,
       prod3,
       prod4,
+      prod7,
       prod5,
+      prod8,
     ];
 
 

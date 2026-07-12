@@ -731,6 +731,11 @@ const HomeAsset = sequelize.define("HomeAsset", {
     defaultValue: "",
     comment: "资源文件名/相对路径，后端会拼成 cloud://.../homeAsset/...；也兼容完整 https/cloud:// 地址",
   },
+  content: {
+    type: DataTypes.TEXT,
+    defaultValue: "",
+    comment: "资源文本内容，用于首页可配置文案等非图片资产",
+  },
   mimeType: {
     type: DataTypes.STRING(80),
     defaultValue: "",

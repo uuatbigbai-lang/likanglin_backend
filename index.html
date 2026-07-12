@@ -312,6 +312,65 @@
       display: flex;
       gap: 8px;
     }
+    .modal {
+      position: fixed;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      z-index: 1000;
+    }
+    .modal.show {
+      display: flex;
+    }
+    .modal-backdrop {
+      position: absolute;
+      inset: 0;
+      background: rgba(16, 24, 40, 0.56);
+    }
+    .modal-card {
+      position: relative;
+      width: min(100%, 440px);
+      padding: 22px;
+      border-radius: 12px;
+      background: #fff;
+      box-shadow: 0 24px 60px rgba(16, 24, 40, 0.24);
+    }
+    .modal-card h3 {
+      margin: 0 0 8px;
+      font-size: 20px;
+      line-height: 28px;
+    }
+    .modal-desc {
+      margin: 0 0 18px;
+      color: #667085;
+      font-size: 14px;
+      line-height: 22px;
+    }
+    .modal-grid {
+      display: grid;
+      gap: 14px;
+    }
+    .modal-summary {
+      padding: 12px 14px;
+      border: 1px solid #e4e7ec;
+      border-radius: 8px;
+      background: #f8fafc;
+    }
+    .modal-summary strong {
+      display: block;
+      margin-bottom: 4px;
+      font-size: 15px;
+      line-height: 22px;
+      word-break: break-all;
+    }
+    .modal-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+      margin-top: 20px;
+    }
     @media (max-width: 920px) {
       .topbar,
       .toolbar,
@@ -489,6 +548,28 @@
     </section>
   </main>
 
+  <div id="paymentModal" class="modal" aria-hidden="true">
+    <div class="modal-backdrop" data-action="close-payment-modal"></div>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="paymentModalTitle">
+      <h3 id="paymentModalTitle">修改待付款金额</h3>
+      <p class="modal-desc">仅待付款订单可修改客户付款金额。保存后，该订单下次发起支付将按新金额生成支付单。</p>
+      <div class="modal-grid">
+        <div class="modal-summary">
+          <strong id="paymentModalOrderNo">-</strong>
+          <div class="small">当前付款金额：<span id="paymentModalCurrentAmount">-</span></div>
+        </div>
+        <div>
+          <label for="paymentModalInput">新付款金额（元）</label>
+          <input id="paymentModalInput" type="number" min="0.01" step="0.01" placeholder="请输入新的付款金额">
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button id="paymentModalCancel" class="subtle" type="button">取消</button>
+        <button id="paymentModalSubmit" type="button">保存金额</button>
+      </div>
+    </div>
+  </div>
+
   <script>
     const state = {
       orders: [],
@@ -496,6 +577,7 @@
       pageNum: 1,
       expandedOrderNo: '',
       loading: false,
+      paymentEditor: null,
     };
     const $ = (id) => document.getElementById(id);
 
@@ -522,6 +604,28 @@
       const notice = $('notice');
       notice.textContent = message;
       notice.className = `notice show${isError ? ' error' : ''}`;
+    }
+
+    function closePaymentModal() {
+      state.paymentEditor = null;
+      $('paymentModal').classList.remove('show');
+      $('paymentModal').setAttribute('aria-hidden', 'true');
+      $('paymentModalInput').value = '';
+      $('paymentModalSubmit').disabled = false;
+    }
+
+    function openPaymentModal(orderNo, currentAmount) {
+      state.paymentEditor = {
+        orderNo,
+        currentAmount: Number(currentAmount || 0),
+      };
+      $('paymentModalOrderNo').textContent = `订单：${orderNo}`;
+      $('paymentModalCurrentAmount').textContent = money(currentAmount || 0);
+      $('paymentModalInput').value = (Number(currentAmount || 0) / 100).toFixed(2);
+      $('paymentModal').classList.add('show');
+      $('paymentModal').setAttribute('aria-hidden', 'false');
+      $('paymentModalInput').focus();
+      $('paymentModalInput').select();
     }
 
     function money(fen) {
@@ -886,24 +990,28 @@
     }
 
     async function updateOrderPaymentAmount(orderNo, currentAmount) {
-      const currentYuan = (Number(currentAmount || 0) / 100).toFixed(2);
-      const value = window.prompt(`请输入新的客户付款金额（元）\n订单：${orderNo}`, currentYuan);
-      if (value === null) return;
+      const value = $('paymentModalInput').value.trim();
       const amount = Math.round(Number(value) * 100);
       if (!Number.isFinite(amount) || amount <= 0) {
         showNotice('请输入有效金额', true);
+        $('paymentModalInput').focus();
         return;
       }
+      const submitButton = $('paymentModalSubmit');
+      submitButton.disabled = true;
       try {
         await requestJson('/api/admin/order/payment-amount', {
           method: 'POST',
           headers: headers(),
           body: JSON.stringify({ orderNo, paymentAmount: amount }),
         });
+        closePaymentModal();
         showNotice('订单付款金额已更新');
-        loadOrders(state.pageNum);
+        await loadOrders(state.pageNum);
       } catch (err) {
         showNotice(err.message, true);
+      } finally {
+        submitButton.disabled = false;
       }
     }
 
@@ -1025,7 +1133,7 @@
         shipOrder(orderNo);
       }
       if (action === 'edit-payment') {
-        updateOrderPaymentAmount(orderNo, target.dataset.paymentAmount);
+        openPaymentModal(orderNo, target.dataset.paymentAmount);
       }
       if (action === 'start-return') {
         startReturn(orderNo);
@@ -1109,6 +1217,25 @@
     $('refreshLatestUsers').addEventListener('click', () => {
       loadLatestUsers();
       showNotice('最新登录用户已刷新');
+    });
+    $('paymentModalCancel').addEventListener('click', closePaymentModal);
+    $('paymentModal').addEventListener('click', (event) => {
+      const target = event.target.closest('[data-action="close-payment-modal"]');
+      if (!target) return;
+      closePaymentModal();
+    });
+    $('paymentModalSubmit').addEventListener('click', async () => {
+      if (!state.paymentEditor) return;
+      await updateOrderPaymentAmount(state.paymentEditor.orderNo, state.paymentEditor.currentAmount);
+    });
+    $('paymentModalInput').addEventListener('keydown', async (event) => {
+      if (event.key === 'Enter' && state.paymentEditor) {
+        event.preventDefault();
+        await updateOrderPaymentAmount(state.paymentEditor.orderNo, state.paymentEditor.currentAmount);
+      }
+      if (event.key === 'Escape') {
+        closePaymentModal();
+      }
     });
     $('prevPage').addEventListener('click', () => loadOrders(Math.max(1, state.pageNum - 1)));
     $('nextPage').addEventListener('click', () => loadOrders(state.pageNum + 1));
