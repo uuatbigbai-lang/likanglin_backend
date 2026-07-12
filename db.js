@@ -807,6 +807,11 @@ async function ensureColumn(tableName, columnName, definition) {
 }
 
 async function ensureOnlineSchema() {
+  await ensureColumn("HomeAssets", "content", {
+    type: DataTypes.TEXT,
+    defaultValue: "",
+    comment: "资源文本内容，用于首页可配置文案等非图片资产",
+  });
   await ensureColumn("Orders", "waybillToken", {
     type: DataTypes.STRING(256),
     allowNull: true,
