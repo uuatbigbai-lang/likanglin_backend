@@ -386,6 +386,7 @@
               <strong>${escapeHtml(item.title)} / ${escapeHtml(item.couponNo)}</strong>
               <div class="small">生成：${escapeHtml(item.createdByOpenid || '-')}</div>
               <div class="small">领取：${escapeHtml(item.claimedByOpenid || '-')}</div>
+              <div class="small">${escapeHtml(item.scopeDisplayText || '适用商品：全场通用')}</div>
               <div class="small">核销：${escapeHtml(item.usedByOpenid || '-')} ${item.orderNo ? ` / 订单 ${escapeHtml(item.orderNo)}` : ''}</div>
             </div>
             <span class="badge ${item.recordStatus === 'used' ? 'done' : item.recordStatus === 'claimed' ? 'pending' : ''}">${escapeHtml(couponStatusText(item.recordStatus))}</span>

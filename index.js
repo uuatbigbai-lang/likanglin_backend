@@ -90,14 +90,14 @@ const ORDER_STATUS_REFUNDED = 70;
 
 const DEFAULT_COUPON_TEMPLATES = [
   {
-    templateType: 'nine',
-    title: '9折券',
+    templateType: 'eight',
+    title: '8折券',
     ruleType: 'discount',
-    value: 9,
+    value: 8,
     thresholdAmount: 0,
     minQuantity: 0,
-    desc: '订单商品金额可享9折优惠',
-    sort: 30,
+    desc: '订单商品金额可享8折优惠',
+    sort: 50,
   },
   {
     templateType: 'seven',
@@ -107,7 +107,17 @@ const DEFAULT_COUPON_TEMPLATES = [
     thresholdAmount: 0,
     minQuantity: 0,
     desc: '订单商品金额可享7折优惠',
-    sort: 20,
+    sort: 40,
+  },
+  {
+    templateType: 'five',
+    title: '5折券',
+    ruleType: 'discount',
+    value: 5,
+    thresholdAmount: 0,
+    minQuantity: 0,
+    desc: '订单商品金额可享5折优惠',
+    sort: 30,
   },
   {
     templateType: 'buy2get1',
@@ -117,6 +127,16 @@ const DEFAULT_COUPON_TEMPLATES = [
     thresholdAmount: 0,
     minQuantity: 3,
     desc: '同一订单购买满3件，免除最低价1件商品金额',
+    sort: 20,
+  },
+  {
+    templateType: 'employee_special',
+    title: '员工特别优惠',
+    ruleType: 'employee_price',
+    value: 0,
+    thresholdAmount: 0,
+    minQuantity: 0,
+    desc: '按商品已配置的员工价结算，仅对配置了员工价的商品生效',
     sort: 10,
   },
 ];
@@ -132,7 +152,9 @@ const normalizeCouponTemplate = (template = {}) => {
       ? `订单商品金额可享${value}折优惠`
       : ruleType === 'amount'
         ? `订单可减免${(value / 100).toFixed(2)}元`
-        : `订单满${minQuantity}件，免除最低价${value || 1}件商品金额`
+        : ruleType === 'buy_x_get_y'
+          ? `订单满${minQuantity}件，免除最低价${value || 1}件商品金额`
+          : '按商品员工价自动结算'
   );
 
   return {
@@ -145,6 +167,8 @@ const normalizeCouponTemplate = (template = {}) => {
     desc,
     status: Number(template.status ?? 1),
     sort: Number(template.sort || 0),
+    scopeSpuIds: Array.isArray(template.scopeSpuIds) ? template.scopeSpuIds : [],
+    scopeGoods: Array.isArray(template.scopeGoods) ? template.scopeGoods : [],
     meta: template.meta || {},
   };
 };
@@ -164,10 +188,7 @@ const formatCouponTemplate = (template) => normalizeCouponTemplate(
 const ensureDefaultCouponTemplates = async () => {
   for (const template of DEFAULT_COUPON_TEMPLATES) {
     const normalized = normalizeCouponTemplate(template);
-    const existed = await CouponTemplate.findOne({ where: { templateType: normalized.templateType } });
-    if (!existed) {
-      await CouponTemplate.create(normalized);
-    }
+    await CouponTemplate.upsert(normalized);
   }
 };
 
@@ -205,10 +226,15 @@ const formatCouponRecord = (coupon) => {
   return {
     key: data.couponNo,
     couponNo: data.couponNo,
+    templateType: data.templateType,
+    ruleType: template.ruleType,
     status: statusMap[data.status] || 'disabled',
     recordStatus: data.status,
     type: template.ruleType === 'buy_x_get_y' ? 4 : template.ruleType === 'amount' ? 1 : 2,
     value: template.value || 0,
+    base: template.thresholdAmount || 0,
+    valueLabel: template.ruleType === 'employee_price' ? '员工价' : '',
+    unitLabel: template.ruleType === 'employee_price' ? '' : '',
     tag: statusTextMap[data.status] || '已失效',
     statusText: statusTextMap[data.status] || '已失效',
     canVoid: ['generated', 'claimed'].includes(data.status),
@@ -221,14 +247,140 @@ const formatCouponRecord = (coupon) => {
     usedByOpenid: data.usedByOpenid || '',
     orderNo: data.orderNo || '',
     discountAmount: data.discountAmount || '0',
+    scopeSpuIds: getScopedSpuIds(template),
+    scopeGoods: getScopedGoodsSummary(template),
+    scopeGoodsText: getScopedGoodsSummary(template).map((item) => item.title).join('、'),
+    scopeType: getScopedSpuIds(template).length ? 'selected_goods' : 'all_goods',
+    scopeDisplayText: getScopedSpuIds(template).length
+      ? `适用商品：${getScopedGoodsSummary(template).map((item) => item.title).join('、') || '指定商品'}`
+      : '适用商品：全场通用',
     createdAt: data.createdAt,
     claimedAt: data.claimedAt,
     usedAt: data.usedAt,
     useNotes: template.ruleType === 'buy_x_get_y'
       ? `订单商品总数满${template.minQuantity || 3}件时自动抵扣最低价${template.value || 1}件。`
-      : '下单时自动选择可用优惠券并抵扣。',
-    storeAdapt: '商城通用',
+      : template.ruleType === 'employee_price'
+        ? '仅对已配置员工价的商品生效，下单时按员工价自动抵扣差额。'
+        : getScopedSpuIds(template).length
+          ? '仅对指定商品生效，下单时自动按命中的商品金额抵扣。'
+          : '下单时自动选择可用优惠券并抵扣。',
+    storeAdapt: getScopedSpuIds(template).length
+      ? `指定商品可用（${getScopedGoodsSummary(template).map((item) => item.title).join('、') || '部分商品'}）`
+      : '商城通用',
   };
+};
+
+const parseMoneyToCents = (value) => {
+  if (value === null || value === undefined || value === '') return 0;
+  const amount = Number(value);
+  if (!Number.isFinite(amount) || amount <= 0) return 0;
+  return Math.round(amount);
+};
+
+const productPriceToCents = (value) => {
+  if (value === null || value === undefined || value === '') return 0;
+  const amount = Number(value);
+  if (!Number.isFinite(amount) || amount <= 0) return 0;
+  return Math.round(amount * 100);
+};
+
+const getSkuSalePrice = (product = {}, skuId = '') => {
+  const skuList = Array.isArray(product.skuList) ? product.skuList : [];
+  const matchedSku = skuList.find((sku) => String(sku?.skuId || '') === String(skuId || ''));
+  const skuPrice = Number(matchedSku?.priceInfo?.[0]?.price || 0);
+  return Number.isFinite(skuPrice) && skuPrice > 0 ? Math.round(skuPrice) : 0;
+};
+
+const getProductBasePrice = (product = {}, skuId = '') => (
+  getSkuSalePrice(product, skuId)
+  || Math.round(Number(product.minSalePrice || 0))
+  || productPriceToCents(product.price)
+);
+
+const getProductEmployeePrice = (product = {}) => Math.max(parseMoneyToCents(product.employeePrice), 0);
+
+const buildSpecsText = (specInfo = []) => (
+  Array.isArray(specInfo)
+    ? specInfo.map((item) => item?.specValue).filter(Boolean).join('，')
+    : ''
+);
+
+const buildPricedGoodsList = async (goodsList = []) => {
+  const spuIds = Array.from(new Set(goodsList.map((item) => String(item.spuId || '').trim()).filter(Boolean)));
+  const products = spuIds.length
+    ? await Product.findAll({ where: { spuId: { [Op.in]: spuIds } } })
+    : [];
+  const productMap = new Map(products.map((item) => [item.spuId, typeof item.toJSON === 'function' ? item.toJSON() : item]));
+
+  return goodsList.map((item) => {
+    const spuId = String(item.spuId || '').trim();
+    const skuId = String(item.skuId || '').trim();
+    const product = productMap.get(spuId) || {};
+    const quantity = Math.max(Number(item.quantity || item.buyQuantity || 1), 1);
+    const price = getProductBasePrice(product, skuId)
+      || Math.max(Number(item.price || item.settlePrice || item.actualPrice || 0), 0);
+    const employeePrice = getProductEmployeePrice(product);
+    return {
+      storeId: item.storeId || '1',
+      storeName: item.storeName || '蓝点荟旗舰店',
+      spuId,
+      skuId,
+      goodsName: item.goodsName || item.title || product.title || '',
+      title: item.goodsName || item.title || product.title || '',
+      thumb: item.thumb || item.image || item.primaryImage || '',
+      image: item.thumb || item.image || item.primaryImage || '',
+      quantity,
+      price,
+      settlePrice: price,
+      actualPrice: price,
+      employeePrice,
+      specs: item.specs || buildSpecsText(item.specInfo || []),
+      specInfo: Array.isArray(item.specInfo) ? item.specInfo : [],
+      skuSpecLst: Array.isArray(item.specInfo) ? item.specInfo : [],
+      tagPrice: null,
+      tagText: null,
+    };
+  });
+};
+
+const getRequestedCouponNo = (couponList = [], couponNo = '') => {
+  const explicitCouponNo = String(couponNo || '').trim();
+  if (explicitCouponNo) return explicitCouponNo;
+  if (!Array.isArray(couponList) || !couponList.length) return '';
+  const selectedCoupon = couponList.find((item) => item && (item.selected || item.isSelected) && item.couponNo);
+  if (selectedCoupon?.couponNo) return String(selectedCoupon.couponNo).trim();
+  const firstCoupon = couponList.find((item) => item && item.couponNo);
+  return firstCoupon?.couponNo ? String(firstCoupon.couponNo).trim() : '';
+};
+
+const getScopedSpuIds = (template = {}) => {
+  const scopeSpuIds = Array.isArray(template.meta?.scopeSpuIds)
+    ? template.meta.scopeSpuIds
+    : Array.isArray(template.scopeSpuIds)
+      ? template.scopeSpuIds
+      : [];
+  return Array.from(new Set(scopeSpuIds.map((item) => String(item || '').trim()).filter(Boolean)));
+};
+
+const getScopedGoodsSummary = (template = {}) => {
+  const scopeGoods = Array.isArray(template.meta?.scopeGoods)
+    ? template.meta.scopeGoods
+    : Array.isArray(template.scopeGoods)
+      ? template.scopeGoods
+      : [];
+  return scopeGoods
+    .map((item) => ({
+      spuId: String(item?.spuId || '').trim(),
+      title: String(item?.title || '').trim(),
+    }))
+    .filter((item) => item.spuId && item.title);
+};
+
+const getEligibleGoodsForCoupon = (template = {}, goodsList = []) => {
+  const scopeSpuIds = getScopedSpuIds(template);
+  if (!scopeSpuIds.length) return goodsList;
+  const scopeSet = new Set(scopeSpuIds);
+  return goodsList.filter((goods) => scopeSet.has(String(goods.spuId || '').trim()));
 };
 
 const calculateCouponDiscount = (coupon, goodsList = [], totalAmount = 0) => {
@@ -236,14 +388,21 @@ const calculateCouponDiscount = (coupon, goodsList = [], totalAmount = 0) => {
   const amount = Math.max(Number(totalAmount || 0), 0);
   if (amount <= 0) return 0;
   const template = getCouponTemplateSnapshot(coupon);
+  const eligibleGoodsList = getEligibleGoodsForCoupon(template, goodsList);
+  const eligibleAmount = eligibleGoodsList.reduce((sum, goods) => {
+    const qty = Math.max(Number(goods.quantity || goods.buyQuantity || 1), 0);
+    const price = Math.max(Number(goods.price || goods.settlePrice || goods.actualPrice || 0), 0);
+    return sum + qty * price;
+  }, 0);
+  if ((template.ruleType === 'discount' || template.ruleType === 'amount') && eligibleAmount <= 0) return 0;
   if (template.thresholdAmount && amount < template.thresholdAmount) return 0;
 
   if (template.ruleType === 'discount') {
     if (template.value <= 0 || template.value >= 10) return 0;
-    return Math.floor(amount * (10 - template.value) / 10);
+    return Math.floor(eligibleAmount * (10 - template.value) / 10);
   }
   if (template.ruleType === 'amount') {
-    return Math.min(Math.max(Number(template.value || 0), 0), Math.max(amount - 1, 0));
+    return Math.min(Math.max(Number(template.value || 0), 0), Math.max(eligibleAmount - 1, 0));
   }
   if (template.ruleType === 'buy_x_get_y') {
     const units = [];
@@ -260,12 +419,36 @@ const calculateCouponDiscount = (coupon, goodsList = [], totalAmount = 0) => {
       .slice(0, freeQuantity)
       .reduce((sum, price) => sum + price, 0);
   }
+  if (template.ruleType === 'employee_price') {
+    return goodsList.reduce((sum, goods) => {
+      const quantity = Math.max(Number(goods.quantity || goods.buyQuantity || 1), 0);
+      const salePrice = Math.max(Number(goods.price || goods.settlePrice || goods.actualPrice || 0), 0);
+      const employeePrice = Math.max(Number(goods.employeePrice || 0), 0);
+      if (!employeePrice || employeePrice >= salePrice) return sum;
+      return sum + (salePrice - employeePrice) * quantity;
+    }, 0);
+  }
   return 0;
 };
 
 const getCouponUnavailableReason = (coupon, goodsList = []) => {
   if (!coupon) return '优惠券不可用';
   const template = getCouponTemplateSnapshot(coupon);
+  const eligibleGoodsList = getEligibleGoodsForCoupon(template, goodsList);
+  if ((template.ruleType === 'discount' || template.ruleType === 'amount') && !eligibleGoodsList.length) {
+    const goodsNames = getScopedGoodsSummary(template).map((item) => item.title);
+    return goodsNames.length
+      ? `${template.title}仅限指定商品可用：${goodsNames.join('、')}`
+      : `${template.title}仅限指定商品可用`;
+  }
+  if (template.ruleType === 'employee_price') {
+    const hasEmployeeGoods = goodsList.some((goods) => {
+      const employeePrice = Math.max(Number(goods.employeePrice || 0), 0);
+      const salePrice = Math.max(Number(goods.price || goods.settlePrice || goods.actualPrice || 0), 0);
+      return employeePrice > 0 && employeePrice < salePrice;
+    });
+    if (!hasEmployeeGoods) return `${template.title}仅对已配置员工价的商品可用`;
+  }
   if (template.ruleType === 'buy_x_get_y') {
     const totalQuantity = goodsList.reduce((sum, goods) => sum + Math.max(Number(goods.quantity || goods.buyQuantity || 1), 0), 0);
     if (totalQuantity < (template.minQuantity || 3)) return `${template.title}需当前订单满${template.minQuantity || 3}件商品可用`;
@@ -374,7 +557,10 @@ const mergeBindingStatsIntoSalesStatsMap = (statsMap, bindings = []) => {
       totalSalesAmount: 0,
       boundUserCount: 0,
     };
-    current.boundUserCount += 1;
+    current.orderCount = Number(current.orderCount || 0);
+    current.soldQuantity = Number(current.soldQuantity || 0);
+    current.totalSalesAmount = Number(current.totalSalesAmount || 0);
+    current.boundUserCount = Number(current.boundUserCount || 0) + 1;
     map.set(salesOpenid, current);
   });
   return map;
@@ -1526,6 +1712,10 @@ app.get('/admin/coupons', (req, res) => {
   res.sendFile(path.join(__dirname, 'coupons.html'));
 });
 
+app.get('/admin/products', (req, res) => {
+  res.sendFile(path.join(__dirname, 'products.html'));
+});
+
 app.get('/admin/bindings', (req, res) => {
   res.sendFile(path.join(__dirname, 'bindings.html'));
 });
@@ -1653,6 +1843,23 @@ app.post('/api/coupon/admin/create', async (req, res) => {
 
     const template = await getActiveCouponTemplate(req.body?.templateType);
     if (!template) return res.send({ code: -1, message: '未知优惠券类型' });
+    const scopeSpuIds = Array.isArray(req.body?.scopeSpuIds)
+      ? Array.from(new Set(req.body.scopeSpuIds.map((item) => String(item || '').trim()).filter(Boolean)))
+      : [];
+    let scopeGoods = [];
+    if (template.ruleType === 'discount' && scopeSpuIds.length) {
+      const products = await Product.findAll({
+        where: { spuId: { [Op.in]: scopeSpuIds } },
+        attributes: ['spuId', 'title'],
+      });
+      scopeGoods = products.map((item) => {
+        const data = typeof item.toJSON === 'function' ? item.toJSON() : item;
+        return { spuId: data.spuId, title: data.title };
+      });
+      if (!scopeGoods.length) {
+        return res.send({ code: -1, message: '所选适用商品不存在' });
+      }
+    }
 
     const coupon = await CouponRecord.create({
       couponNo: buildCouponNo(),
@@ -1660,7 +1867,11 @@ app.post('/api/coupon/admin/create', async (req, res) => {
       title: template.title,
       status: 'generated',
       createdByOpenid: openid,
-      meta: template,
+      meta: {
+        ...template,
+        scopeSpuIds,
+        scopeGoods,
+      },
     });
 
     res.send({ code: 0, data: formatCouponRecord(coupon) });
@@ -1677,7 +1888,10 @@ app.get('/api/coupon/admin/templates', async (req, res) => {
     }
     await ensureDefaultCouponTemplates();
     const templates = await CouponTemplate.findAll({
-      where: { status: 1 },
+      where: {
+        status: 1,
+        templateType: { [Op.in]: DEFAULT_COUPON_TEMPLATES.map((item) => item.templateType) },
+      },
       order: [['sort', 'DESC'], ['createdAt', 'ASC']],
     });
     res.send({ code: 0, data: templates.map(formatCouponTemplate) });
@@ -1799,7 +2013,12 @@ app.get('/api/admin/coupons', adminAuth, async (req, res) => {
 app.get('/api/admin/coupon-templates', adminAuth, async (req, res) => {
   try {
     await ensureDefaultCouponTemplates();
-    const templates = await CouponTemplate.findAll({ order: [['sort', 'DESC'], ['createdAt', 'ASC']] });
+    const templates = await CouponTemplate.findAll({
+      where: {
+        templateType: { [Op.in]: DEFAULT_COUPON_TEMPLATES.map((item) => item.templateType) },
+      },
+      order: [['sort', 'DESC'], ['createdAt', 'ASC']],
+    });
     res.send({ code: 0, data: templates.map(formatCouponTemplate) });
   } catch (err) {
     res.send({ code: -1, message: err.message });
@@ -1811,8 +2030,8 @@ app.post('/api/admin/coupon-templates', adminAuth, async (req, res) => {
     const payload = normalizeCouponTemplate(req.body || {});
     if (!payload.templateType) return res.send({ code: -1, message: '请填写模板标识' });
     if (!payload.title) return res.send({ code: -1, message: '请填写模板标题' });
-    if (!['discount', 'amount', 'buy_x_get_y'].includes(payload.ruleType)) {
-      return res.send({ code: -1, message: '规则类型仅支持 discount/amount/buy_x_get_y' });
+    if (!['discount', 'amount', 'buy_x_get_y', 'employee_price'].includes(payload.ruleType)) {
+      return res.send({ code: -1, message: '规则类型仅支持 discount/amount/buy_x_get_y/employee_price' });
     }
     if (payload.ruleType === 'discount' && (payload.value <= 0 || payload.value >= 10)) {
       return res.send({ code: -1, message: '折扣券 value 请填写 0-10 之间的折扣值，如 9 表示9折' });
@@ -1825,8 +2044,69 @@ app.post('/api/admin/coupon-templates', adminAuth, async (req, res) => {
     }
 
     await CouponTemplate.upsert(payload);
-    const templates = await CouponTemplate.findAll({ order: [['sort', 'DESC'], ['createdAt', 'ASC']] });
+    const templates = await CouponTemplate.findAll({
+      where: {
+        templateType: { [Op.in]: DEFAULT_COUPON_TEMPLATES.map((item) => item.templateType) },
+      },
+      order: [['sort', 'DESC'], ['createdAt', 'ASC']],
+    });
     res.send({ code: 0, data: templates.map(formatCouponTemplate) });
+  } catch (err) {
+    res.send({ code: -1, message: err.message });
+  }
+});
+
+app.get('/api/admin/products', adminAuth, async (req, res) => {
+  try {
+    const keyword = String(req.query.keyword || '').trim();
+    const where = {};
+    if (keyword) {
+      where[Op.or] = [
+        { title: { [Op.like]: `%${keyword}%` } },
+        { brief: { [Op.like]: `%${keyword}%` } },
+        { spuId: { [Op.like]: `%${keyword}%` } },
+      ];
+    }
+    const products = await Product.findAll({
+      where,
+      order: [['sort', 'DESC'], ['createdAt', 'DESC']],
+      attributes: ['spuId', 'title', 'brief', 'price', 'minSalePrice', 'employeePrice'],
+    });
+    const data = products.map((product) => {
+      const item = typeof product.toJSON === 'function' ? product.toJSON() : product;
+      const salePrice = Math.round(Number(item.minSalePrice || 0)) || productPriceToCents(item.price);
+      const employeePrice = Math.max(Number(item.employeePrice || 0), 0);
+      return {
+        ...item,
+        salePrice,
+        salePriceText: `¥${(salePrice / 100).toFixed(2)}`,
+        employeePrice,
+        employeePriceText: employeePrice ? `¥${(employeePrice / 100).toFixed(2)}` : '',
+        employeePriceYuan: employeePrice ? (employeePrice / 100).toFixed(2) : '',
+      };
+    });
+    res.send({ code: 0, data });
+  } catch (err) {
+    res.send({ code: -1, message: err.message });
+  }
+});
+
+app.post('/api/admin/products/:spuId', adminAuth, async (req, res) => {
+  try {
+    const spuId = String(req.params.spuId || '').trim();
+    const product = await Product.findOne({ where: { spuId } });
+    if (!product) return res.send({ code: -1, message: '商品不存在' });
+    const rawEmployeePrice = String(req.body?.employeePrice ?? '').trim();
+    let employeePrice = 0;
+    if (rawEmployeePrice) {
+      const parsed = Number(rawEmployeePrice);
+      if (!Number.isFinite(parsed) || parsed < 0) {
+        return res.send({ code: -1, message: '员工价格式不正确' });
+      }
+      employeePrice = Math.round(parsed * 100);
+    }
+    await product.update({ employeePrice });
+    res.send({ code: 0, data: { spuId, employeePrice } });
   } catch (err) {
     res.send({ code: -1, message: err.message });
   }
@@ -2147,6 +2427,7 @@ app.get('/api/products', async (req, res) => {
         'title',
         'brief',
         'price',
+        'employeePrice',
         'originalPrice',
         'badge',
         'sort',
@@ -2804,39 +3085,45 @@ app.post('/api/cart/delete', async (req, res) => {
 app.post('/api/order/settle', async (req, res) => {
   try {
     const openid = req.headers['x-wx-openid'] || 'local_dev_user';
-    const { goodsRequestList = [] } = req.body;
+    const { goodsRequestList = [], couponList = [], couponNo = '' } = req.body;
     const boundSales = await getBoundSalesForUser(openid);
-
-    // 构造 skuDetailVos
-    const skuDetailVos = goodsRequestList.map((item) => ({
-      storeId: item.storeId || '1',
+    const pricedGoodsList = await buildPricedGoodsList(goodsRequestList);
+    const requestedCouponNo = getRequestedCouponNo(couponList, couponNo);
+    const skuDetailVos = pricedGoodsList.map((item) => ({
+      storeId: item.storeId,
       spuId: item.spuId,
-      skuId: item.skuId || '',
-      goodsName: item.goodsName || item.title || '',
-      thumb: item.thumb || item.image || item.primaryImage || '',
-      image: item.thumb || item.image || item.primaryImage || '',
-      quantity: item.quantity || 1,
-      settlePrice: item.price || 0,
+      skuId: item.skuId,
+      goodsName: item.goodsName,
+      thumb: item.thumb,
+      image: item.image,
+      quantity: item.quantity,
+      settlePrice: item.price,
+      actualPrice: item.price,
+      employeePrice: item.employeePrice,
       tagPrice: null,
       tagText: null,
-      skuSpecLst: item.specInfo || [],
+      skuSpecLst: item.skuSpecLst,
     }));
 
     // 计算总价
     const totalSalePrice = skuDetailVos.reduce((sum, g) => sum + g.quantity * Number(g.settlePrice), 0);
     const totalGoodsCount = skuDetailVos.reduce((sum, g) => sum + g.quantity, 0);
+    const couponWhere = { claimedByOpenid: openid, status: 'claimed' };
+    if (requestedCouponNo) couponWhere.couponNo = requestedCouponNo;
     const claimedCoupons = await CouponRecord.findAll({
-      where: { claimedByOpenid: openid, status: 'claimed' },
+      where: couponWhere,
       order: [['claimedAt', 'ASC'], ['createdAt', 'ASC']],
     });
     const couponCandidates = claimedCoupons.map((coupon) => ({
       coupon,
       amount: calculateCouponDiscount(coupon, skuDetailVos, totalSalePrice),
     }));
-    const selectedCoupon = couponCandidates.find((item) => item.amount > 0) || null;
+    const selectedCoupon = requestedCouponNo
+      ? (couponCandidates.find((item) => item.amount > 0) || null)
+      : (couponCandidates.find((item) => item.amount > 0) || null);
     const totalCouponAmount = selectedCoupon ? selectedCoupon.amount : 0;
     const totalPayAmount = Math.max(totalSalePrice - totalCouponAmount, 1);
-    const couponList = couponCandidates.map(({ coupon, amount }) => {
+    const settleCouponList = couponCandidates.map(({ coupon, amount }) => {
       const formatted = formatCouponRecord(coupon);
       const isUsable = amount > 0;
       return {
@@ -2875,7 +3162,7 @@ app.post('/api/order/settle', async (req, res) => {
             storeName: '蓝点荟旗舰店',
             storeTotalPayAmount: totalPayAmount,
             skuDetailVos,
-            couponList,
+            couponList: settleCouponList,
           },
         ],
         inValidGoodsList: null,
@@ -3765,7 +4052,8 @@ app.post('/api/order/create', async (req, res) => {
     const openid = headerOpenid || codeOpenid || 'local_dev_user';
 
     // 后端重新计算总价（以防前端篡改）
-    const calcTotal = goodsList.reduce((sum, g) => sum + (Number(g.price) || 0) * (Number(g.quantity) || 1), 0);
+    const pricedGoodsList = await buildPricedGoodsList(goodsList);
+    const calcTotal = pricedGoodsList.reduce((sum, g) => sum + (Number(g.price) || 0) * (Number(g.quantity) || 1), 0);
     if (calcTotal <= 0) {
       return res.send({ code: -1, message: '订单金额异常' });
     }
@@ -3778,7 +4066,7 @@ app.post('/api/order/create', async (req, res) => {
     const selectedCoupon = claimedCoupons
       .map((coupon) => ({
         coupon,
-        amount: calculateCouponDiscount(coupon, goodsList, calcTotal),
+        amount: calculateCouponDiscount(coupon, pricedGoodsList, calcTotal),
       }))
       .find((item) => item.amount > 0);
     const couponAmount = selectedCoupon ? selectedCoupon.amount : 0;
@@ -3802,7 +4090,7 @@ app.post('/api/order/create', async (req, res) => {
       couponNo: selectedCoupon ? selectedCoupon.coupon.couponNo : null,
       couponAmount: String(couponAmount),
       couponSnapshot,
-      goodsList: goodsList, // 完整商品快照（含名称、图片、规格、单价、数量）
+      goodsList: pricedGoodsList, // 完整商品快照（含名称、图片、规格、单价、数量）
       userAddress: userAddress || null,
       userName: userName || '',
       remark: remark || '',

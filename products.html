@@ -1,0 +1,355 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>商品管理</title>
+  <link rel="icon" href="data:,">
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 24px;
+      background: #eef2f6;
+      color: #172033;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    .page {
+      max-width: 1160px;
+      margin: 0 auto;
+      display: grid;
+      gap: 20px;
+    }
+    .card {
+      background: #fff;
+      border-radius: 16px;
+      padding: 20px;
+      box-shadow: 0 12px 28px rgba(16, 24, 40, 0.08);
+    }
+    .header h1 {
+      margin: 0;
+      font-size: 28px;
+      line-height: 36px;
+    }
+    .muted {
+      margin-top: 8px;
+      color: #667085;
+      font-size: 14px;
+      line-height: 22px;
+    }
+    .toolbar {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    input, button {
+      font: inherit;
+    }
+    input {
+      height: 40px;
+      border: 1px solid #d0d5dd;
+      border-radius: 10px;
+      padding: 0 12px;
+      background: #fff;
+      min-width: 180px;
+    }
+    button {
+      height: 40px;
+      border: 0;
+      border-radius: 10px;
+      padding: 0 16px;
+      background: #1b3558;
+      color: #fff;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    button.subtle {
+      background: #e7eef8;
+      color: #17314d;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    th, td {
+      padding: 14px 10px;
+      border-bottom: 1px solid #e4e7ec;
+      text-align: left;
+      font-size: 14px;
+      vertical-align: middle;
+    }
+    th {
+      color: #475467;
+      font-size: 13px;
+    }
+    .small {
+      color: #667085;
+      font-size: 12px;
+      line-height: 18px;
+    }
+    .price-input {
+      min-width: 120px;
+      width: 120px;
+    }
+    .notice {
+      min-height: 22px;
+      color: #175cd3;
+      font-size: 14px;
+    }
+    .empty {
+      padding: 24px 0;
+      color: #667085;
+      text-align: center;
+    }
+    @media (max-width: 900px) {
+      body { padding: 16px; }
+      .card { padding: 16px; }
+      table, thead, tbody, tr, td, th { display: block; }
+      thead { display: none; }
+      tr {
+        padding: 14px 0;
+        border-bottom: 1px solid #e4e7ec;
+      }
+      td {
+        border: 0;
+        padding: 6px 0;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <section class="card header">
+      <h1>商品管理</h1>
+      <div class="muted">维护商品员工价。员工特别优惠券生效时，将按每件商品的员工价自动重算抵扣。</div>
+    </section>
+
+    <section class="card">
+      <div class="toolbar">
+        <input id="keyword" placeholder="搜索商品名称或 SPU ID">
+        <button id="searchBtn" type="button">搜索</button>
+        <button id="refreshBtn" type="button" class="subtle">刷新</button>
+      </div>
+      <div id="notice" class="notice" aria-live="polite"></div>
+      <div id="tableWrap"></div>
+    </section>
+  </main>
+
+  <script>
+    const AUTH_STORAGE_KEY = 'admin-auth-v1';
+    const state = {
+      authToken: '',
+      keyword: '',
+      products: [],
+    };
+
+    function $(id) {
+      return document.getElementById(id);
+    }
+
+    function headers() {
+      const result = { 'Content-Type': 'application/json' };
+      if (state.authToken) result['x-admin-token'] = state.authToken;
+      return result;
+    }
+
+    function readStoredAuth() {
+      const raw = localStorage.getItem(AUTH_STORAGE_KEY);
+      if (raw) return raw;
+      try {
+        if (window.parent && window.parent !== window && window.parent.localStorage) {
+          return window.parent.localStorage.getItem(AUTH_STORAGE_KEY);
+        }
+      } catch (err) {
+        return '';
+      }
+      return '';
+    }
+
+    function clearAuth() {
+      state.authToken = '';
+      localStorage.removeItem(AUTH_STORAGE_KEY);
+      try {
+        if (window.parent && window.parent !== window && window.parent.localStorage) {
+          window.parent.localStorage.removeItem(AUTH_STORAGE_KEY);
+        }
+      } catch (err) {
+        // ignore cleanup errors
+      }
+    }
+
+    function readAuth() {
+      try {
+        const raw = readStoredAuth();
+        if (!raw) return;
+        const parsed = JSON.parse(raw);
+        state.authToken = parsed?.token || '';
+      } catch (err) {
+        state.authToken = '';
+      }
+    }
+
+    function redirectToLogin() {
+      if (window.parent && window.parent !== window) {
+        window.parent.location.replace('/admin');
+        return;
+      }
+      window.location.replace('/admin');
+    }
+
+    async function requestJson(url, options = {}) {
+      const response = await fetch(url, options);
+      const json = await response.json().catch(() => ({}));
+      if (response.status === 401) {
+        clearAuth();
+        redirectToLogin();
+        return null;
+      }
+      if (!response.ok || json.code !== 0) {
+        throw new Error(json.message || `请求失败：${response.status}`);
+      }
+      return json;
+    }
+
+    function moneyFromCents(cents) {
+      return `¥${(Number(cents || 0) / 100).toFixed(2)}`;
+    }
+
+    function escapeHtml(value) {
+      return String(value == null ? '' : value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    function showNotice(message, isError = false) {
+      const el = $('notice');
+      el.style.color = isError ? '#b42318' : '#175cd3';
+      el.textContent = message || '';
+    }
+
+    function renderTable() {
+      const wrap = $('tableWrap');
+      if (!state.products.length) {
+        wrap.innerHTML = '<div class="empty">暂无商品</div>';
+        return;
+      }
+      wrap.innerHTML = `
+        <table>
+          <thead>
+            <tr>
+              <th>商品</th>
+              <th>SPU ID</th>
+              <th>商城价</th>
+              <th>员工价</th>
+              <th>说明</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${state.products.map((item) => `
+              <tr>
+                <td>
+                  <strong>${escapeHtml(item.title)}</strong>
+                  <div class="small">${escapeHtml(item.brief || '')}</div>
+                </td>
+                <td>${escapeHtml(item.spuId)}</td>
+                <td>${escapeHtml(item.salePriceText)}</td>
+                <td>
+                  <input
+                    class="price-input"
+                    data-role="employee-price"
+                    data-spu-id="${escapeHtml(item.spuId)}"
+                    value="${escapeHtml(item.employeePriceYuan)}"
+                    placeholder="如 99.00"
+                  >
+                </td>
+                <td class="small">${item.employeePrice > 0 ? `当前员工价 ${escapeHtml(item.employeePriceText)}` : '未配置员工价'}</td>
+                <td>
+                  <button type="button" data-role="save" data-spu-id="${escapeHtml(item.spuId)}">保存</button>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      `;
+    }
+
+    async function fetchProducts() {
+      const query = state.keyword ? `?keyword=${encodeURIComponent(state.keyword)}` : '';
+      showNotice('正在加载商品...');
+      const json = await requestJson(`/api/admin/products${query}`, { headers: headers() });
+      state.products = json.data || [];
+      renderTable();
+      showNotice(`已加载 ${state.products.length} 个商品`);
+    }
+
+    function readEmployeePrice(spuId) {
+      const input = document.querySelector(`[data-role="employee-price"][data-spu-id="${CSS.escape(spuId)}"]`);
+      return input ? input.value.trim() : '';
+    }
+
+    async function saveEmployeePrice(spuId) {
+      const employeePrice = readEmployeePrice(spuId);
+      await requestJson(`/api/admin/products/${encodeURIComponent(spuId)}`, {
+        method: 'POST',
+        headers: headers(),
+        body: JSON.stringify({ employeePrice }),
+      });
+      showNotice(`商品 ${spuId} 的员工价已更新`);
+      await fetchProducts();
+    }
+
+    $('searchBtn').addEventListener('click', async () => {
+      state.keyword = $('keyword').value.trim();
+      try {
+        await fetchProducts();
+      } catch (err) {
+        showNotice(err.message || '加载商品失败', true);
+      }
+    });
+
+    $('refreshBtn').addEventListener('click', async () => {
+      try {
+        await fetchProducts();
+      } catch (err) {
+        showNotice(err.message || '刷新失败', true);
+      }
+    });
+
+    $('tableWrap').addEventListener('click', async (event) => {
+      const target = event.target.closest('[data-role="save"]');
+      if (!target) return;
+      try {
+        await saveEmployeePrice(target.dataset.spuId || '');
+      } catch (err) {
+        showNotice(err.message || '保存失败', true);
+      }
+    });
+
+    $('keyword').addEventListener('keydown', async (event) => {
+      if (event.key !== 'Enter') return;
+      state.keyword = $('keyword').value.trim();
+      try {
+        await fetchProducts();
+      } catch (err) {
+        showNotice(err.message || '搜索失败', true);
+      }
+    });
+
+    readAuth();
+    requestJson('/api/admin/me', { headers: headers() }).then(() => {
+      return fetchProducts();
+    }).catch((err) => {
+      if (state.authToken) {
+        showNotice(err.message || '加载商品失败', true);
+        return;
+      }
+      redirectToLogin();
+    });
+  </script>
+</body>
+</html>

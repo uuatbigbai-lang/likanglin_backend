@@ -98,6 +98,12 @@ const Product = sequelize.define("Product", {
     allowNull: false,
     comment: "商品价格",
   },
+  employeePrice: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    defaultValue: 0,
+    comment: "员工价（分），0 表示未配置",
+  },
   badge: {
     type: DataTypes.STRING(50),
     allowNull: true,
@@ -995,6 +1001,12 @@ async function ensureColumn(tableName, columnName, definition) {
 }
 
 async function ensureOnlineSchema() {
+  await ensureColumn("Products", "employeePrice", {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    defaultValue: 0,
+    comment: "员工价（分），0 表示未配置",
+  });
   await ensureColumn("Users", "latestUsersVisible", {
     type: DataTypes.BOOLEAN,
     allowNull: false,
