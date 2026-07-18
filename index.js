@@ -333,9 +333,8 @@ const buildSalesProfileWithStats = async (salesProfileOrOpenid) => {
       orderStatus: { [Op.in]: [10, 40, 50, ORDER_STATUS_RETURNING] },
     },
   });
-  const bindings = await UserSalesBinding.findAll({
-    where: { salesOpenid: profileOpenid },
-  });
+  const { currentBindingMap } = await buildCurrentBindingsFromSources();
+  const bindings = Array.from(currentBindingMap.values()).filter((item) => item.salesOpenid === profileOpenid);
   const statsMap = mergeBindingStatsIntoSalesStatsMap(buildSalesStatsMap(orders), bindings);
   return formatSalesProfile(profile, statsMap.get(profileOpenid));
 };
@@ -379,6 +378,59 @@ const mergeBindingStatsIntoSalesStatsMap = (statsMap, bindings = []) => {
     map.set(salesOpenid, current);
   });
   return map;
+};
+
+const buildCurrentBindingMap = (bindings = [], bindingRecords = []) => {
+  const map = new Map();
+
+  bindings.forEach((binding) => {
+    const data = typeof binding?.toJSON === 'function' ? binding.toJSON() : binding;
+    const userOpenid = String(data?.userOpenid || '').trim();
+    if (!userOpenid) return;
+    map.set(userOpenid, {
+      userOpenid,
+      salesOpenid: String(data?.salesOpenid || '').trim(),
+      salesNameSnapshot: String(data?.salesNameSnapshot || '').trim(),
+      sourcePage: String(data?.sourcePage || '').trim(),
+      sourcePath: String(data?.sourcePath || '').trim(),
+      sourceSpuId: String(data?.sourceSpuId || '').trim(),
+      boundAt: data?.boundAt || data?.updatedAt || data?.createdAt || null,
+      createdAt: data?.createdAt || null,
+      updatedAt: data?.updatedAt || null,
+    });
+  });
+
+  bindingRecords.forEach((record) => {
+    const data = typeof record?.toJSON === 'function' ? record.toJSON() : record;
+    const userOpenid = String(data?.userOpenid || '').trim();
+    if (!userOpenid || map.has(userOpenid)) return;
+    map.set(userOpenid, {
+      userOpenid,
+      salesOpenid: String(data?.salesOpenid || '').trim(),
+      salesNameSnapshot: String(data?.salesNameSnapshot || '').trim(),
+      sourcePage: String(data?.sourcePage || '').trim(),
+      sourcePath: String(data?.sourcePath || '').trim(),
+      sourceSpuId: String(data?.sourceSpuId || '').trim(),
+      boundAt: data?.boundAt || data?.createdAt || null,
+      createdAt: data?.createdAt || null,
+      updatedAt: data?.updatedAt || null,
+    });
+  });
+
+  return map;
+};
+
+const buildCurrentBindingsFromSources = async () => {
+  const [bindings, bindingRecords] = await Promise.all([
+    UserSalesBinding.findAll(),
+    UserSalesBindingRecord.findAll({
+      order: [['boundAt', 'DESC'], ['createdAt', 'DESC']],
+    }),
+  ]);
+  return {
+    currentBindingMap: buildCurrentBindingMap(bindings, bindingRecords),
+    bindingRecords,
+  };
 };
 
 const formatUserSalesBinding = (binding) => {
@@ -1799,7 +1851,8 @@ app.get('/api/admin/sales', adminAuth, async (req, res) => {
         orderStatus: { [Op.in]: [10, 40, 50, ORDER_STATUS_RETURNING] },
       },
     });
-    const bindings = await UserSalesBinding.findAll();
+    const { currentBindingMap } = await buildCurrentBindingsFromSources();
+    const bindings = Array.from(currentBindingMap.values());
     const statsMap = mergeBindingStatsIntoSalesStatsMap(buildSalesStatsMap(orders), bindings);
     res.send({
       code: 0,
@@ -1812,11 +1865,10 @@ app.get('/api/admin/sales', adminAuth, async (req, res) => {
 
 app.get('/api/admin/sales/bindings', adminAuth, async (req, res) => {
   try {
-    const bindings = await UserSalesBinding.findAll({ order: [['boundAt', 'DESC'], ['updatedAt', 'DESC']] });
-    const records = await UserSalesBindingRecord.findAll({
-      order: [['boundAt', 'DESC'], ['createdAt', 'DESC']],
-      limit: 200,
-    });
+    const { currentBindingMap, bindingRecords } = await buildCurrentBindingsFromSources();
+    const bindings = Array.from(currentBindingMap.values())
+      .sort((left, right) => new Date(right.boundAt || 0).getTime() - new Date(left.boundAt || 0).getTime());
+    const records = bindingRecords.slice(0, 200);
     res.send({
       code: 0,
       data: {
