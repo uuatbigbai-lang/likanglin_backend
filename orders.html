@@ -1,0 +1,1132 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>订单管理</title>
+  <link rel="icon" href="data:,">
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: #f4f6f8;
+      color: #172033;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    .shell {
+      max-width: 1360px;
+      margin: 0 auto;
+      padding: 24px 20px 56px;
+    }
+    .topbar {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(240px, 320px);
+      gap: 20px;
+      align-items: end;
+      margin-bottom: 18px;
+    }
+    .auth-actions {
+      display: flex;
+      gap: 10px;
+      justify-content: flex-end;
+    }
+    .auth-status {
+      padding: 10px 12px;
+      border: 1px solid #dbe6f3;
+      border-radius: 6px;
+      background: #f8fbff;
+      color: #1f5f9f;
+      font-size: 13px;
+      line-height: 20px;
+    }
+    h1 {
+      margin: 0;
+      font-size: 26px;
+      line-height: 34px;
+    }
+    .muted {
+      margin: 6px 0 0;
+      color: #667085;
+      font-size: 14px;
+      line-height: 22px;
+    }
+    .toolbar,
+    .panel {
+      background: #fff;
+      border: 1px solid #e4e7ec;
+      border-radius: 8px;
+      box-shadow: 0 8px 22px rgba(20, 35, 60, 0.05);
+    }
+    .toolbar {
+      display: grid;
+      grid-template-columns: minmax(220px, 1fr) 180px 160px auto auto;
+      gap: 12px;
+      align-items: end;
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+    label {
+      display: block;
+      margin-bottom: 6px;
+      color: #344054;
+      font-size: 13px;
+      line-height: 20px;
+      font-weight: 700;
+    }
+    input,
+    select {
+      width: 100%;
+      min-height: 40px;
+      border: 1px solid #d0d5dd;
+      border-radius: 6px;
+      padding: 8px 10px;
+      background: #fff;
+      color: #172033;
+      font-size: 14px;
+      outline: none;
+    }
+    input:focus,
+    select:focus {
+      border-color: #2472c8;
+      box-shadow: 0 0 0 3px rgba(36, 114, 200, 0.12);
+    }
+    button {
+      min-height: 40px;
+      border: 0;
+      border-radius: 6px;
+      padding: 0 14px;
+      background: #2472c8;
+      color: #fff;
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    button.secondary {
+      background: #edf4ff;
+      color: #1f5f9f;
+    }
+    button.subtle {
+      background: #f2f4f7;
+      color: #344054;
+    }
+    button:disabled {
+      cursor: not-allowed;
+      opacity: 0.55;
+    }
+    .notice {
+      display: none;
+      margin-bottom: 16px;
+      padding: 10px 12px;
+      border-radius: 6px;
+      background: #ecfdf3;
+      color: #027a48;
+      font-size: 14px;
+      line-height: 22px;
+      white-space: pre-wrap;
+    }
+    .notice.error {
+      background: #fef3f2;
+      color: #b42318;
+    }
+    .notice.show { display: block; }
+    .stats {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+    .stat {
+      border: 1px solid #d0d5dd;
+      border-radius: 999px;
+      padding: 7px 12px;
+      background: #fff;
+      color: #344054;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    .stat.active {
+      border-color: #2472c8;
+      background: #edf4ff;
+      color: #1f5f9f;
+      font-weight: 700;
+    }
+    .panel {
+      overflow: hidden;
+    }
+    .admin-grid {
+      display: grid;
+      grid-template-columns: minmax(280px, 0.9fr) minmax(320px, 1fr) minmax(420px, 1.3fr);
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+    .admin-card {
+      padding: 16px;
+    }
+    .inline-form {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 0.75fr);
+      gap: 10px;
+      align-items: end;
+      margin-bottom: 12px;
+    }
+    .inline-form button {
+      grid-column: 1 / -1;
+      width: 100%;
+    }
+    .card-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+    .card-head h2 {
+      margin: 0;
+      font-size: 18px;
+    }
+    .card-head button {
+      min-height: 32px;
+      padding: 0 10px;
+      font-size: 13px;
+    }
+    .mini-list {
+      display: grid;
+      gap: 8px;
+      max-height: 260px;
+      overflow: auto;
+    }
+    .mini-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 9px 0;
+      border-bottom: 1px solid #eef2f6;
+      font-size: 13px;
+      line-height: 20px;
+    }
+    .template-form {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(120px, 1fr));
+      gap: 10px;
+      align-items: end;
+      margin-bottom: 14px;
+    }
+    .template-form .wide {
+      grid-column: span 2;
+    }
+    .template-form .full {
+      grid-column: 1 / -1;
+    }
+    .table-wrap {
+      overflow-x: auto;
+    }
+    table {
+      width: 100%;
+      min-width: 1040px;
+      border-collapse: collapse;
+    }
+    th,
+    td {
+      padding: 13px 14px;
+      border-bottom: 1px solid #eef2f6;
+      text-align: left;
+      vertical-align: top;
+      font-size: 14px;
+      line-height: 22px;
+    }
+    th {
+      background: #f8fafc;
+      color: #475467;
+      font-size: 12px;
+      line-height: 18px;
+      font-weight: 800;
+    }
+    tr:hover td {
+      background: #fbfdff;
+    }
+    .order-no {
+      font-weight: 800;
+      word-break: break-all;
+    }
+    .goods {
+      max-width: 320px;
+    }
+    .goods-title {
+      font-weight: 700;
+    }
+    .goods-sub,
+    .small {
+      color: #667085;
+      font-size: 12px;
+      line-height: 18px;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 24px;
+      border-radius: 999px;
+      padding: 2px 9px;
+      background: #f2f4f7;
+      color: #344054;
+      font-size: 12px;
+      font-weight: 800;
+    }
+    .badge.pending { background: #fff7e6; color: #b54708; }
+    .badge.shipped { background: #edf4ff; color: #1f5f9f; }
+    .badge.done { background: #ecfdf3; color: #027a48; }
+    .badge.after-sale { background: #fff1f3; color: #c01048; }
+    .badge.returning { background: #fff1f3; color: #c01048; }
+    .badge.refunded { background: #f4f3ff; color: #5925dc; }
+    .row-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .ship-row {
+      display: none;
+      background: #f8fafc;
+    }
+    .ship-row.active {
+      display: table-row;
+    }
+    .ship-form {
+      display: grid;
+      grid-template-columns: minmax(180px, 1.2fr) 150px 150px minmax(150px, 1fr) minmax(170px, 1fr) auto;
+      gap: 10px;
+      align-items: end;
+    }
+    .checkbox-line {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      min-height: 40px;
+      color: #475467;
+      font-size: 13px;
+    }
+    .checkbox-line input {
+      width: auto;
+      min-height: auto;
+    }
+    .empty {
+      padding: 42px 18px;
+      text-align: center;
+      color: #667085;
+    }
+    .pager {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      padding: 14px 16px;
+      color: #667085;
+      font-size: 13px;
+    }
+    .pager-actions {
+      display: flex;
+      gap: 8px;
+    }
+    .modal {
+      position: fixed;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      z-index: 1000;
+    }
+    .modal.show {
+      display: flex;
+    }
+    .modal-backdrop {
+      position: absolute;
+      inset: 0;
+      background: rgba(16, 24, 40, 0.56);
+    }
+    .modal-card {
+      position: relative;
+      width: min(100%, 440px);
+      padding: 22px;
+      border-radius: 12px;
+      background: #fff;
+      box-shadow: 0 24px 60px rgba(16, 24, 40, 0.24);
+    }
+    .modal-card h3 {
+      margin: 0 0 8px;
+      font-size: 20px;
+      line-height: 28px;
+    }
+    .modal-desc {
+      margin: 0 0 18px;
+      color: #667085;
+      font-size: 14px;
+      line-height: 22px;
+    }
+    .modal-grid {
+      display: grid;
+      gap: 14px;
+    }
+    .modal-summary {
+      padding: 12px 14px;
+      border: 1px solid #e4e7ec;
+      border-radius: 8px;
+      background: #f8fafc;
+    }
+    .modal-summary strong {
+      display: block;
+      margin-bottom: 4px;
+      font-size: 15px;
+      line-height: 22px;
+      word-break: break-all;
+    }
+    .modal-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+      margin-top: 20px;
+    }
+    .role-options {
+      display: grid;
+      gap: 10px;
+    }
+    .role-radio {
+      display: flex;
+      gap: 10px;
+      align-items: flex-start;
+      padding: 12px 14px;
+      border: 1px solid #dbe6f3;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+    .role-radio input {
+      width: auto;
+      min-height: auto;
+      margin-top: 3px;
+    }
+    .role-radio strong {
+      display: block;
+      margin-bottom: 4px;
+      font-size: 14px;
+    }
+    .field-hidden {
+      display: none;
+    }
+    @media (max-width: 920px) {
+      .topbar,
+      .toolbar,
+      .admin-grid,
+      .inline-form,
+      .template-form,
+      .ship-form {
+        grid-template-columns: 1fr;
+      }
+      .template-form .wide,
+      .template-form .full {
+        grid-column: 1;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div>
+        <h1>订单管理</h1>
+        <p class="muted">进入页面自动加载订单。待发货订单可在列表中直接展开并同步微信发货信息。</p>
+      </div>
+      <div class="panel admin-card">
+        <div id="authStatus" class="auth-status">正在校验登录状态...</div>
+        <div class="auth-actions" style="margin-top:10px">
+          <button id="adminLogout" class="subtle" type="button">退出登录</button>
+        </div>
+      </div>
+    </header>
+
+    <div id="notice" class="notice"></div>
+
+    <section class="toolbar">
+      <div>
+        <label for="keyword">搜索订单号 / 微信交易单号</label>
+        <input id="keyword" placeholder="输入关键字后回车或点刷新">
+      </div>
+      <div>
+        <label for="statusFilter">订单状态</label>
+        <select id="statusFilter">
+          <option value="-1">全部订单</option>
+          <option value="5">待付款</option>
+          <option value="10">待发货</option>
+          <option value="40">待收货</option>
+          <option value="50">已完成</option>
+          <option value="60">退货中</option>
+          <option value="70">已退款</option>
+        </select>
+      </div>
+      <div>
+        <label for="pageSize">每页数量</label>
+        <select id="pageSize">
+          <option value="all" selected>全部</option>
+          <option value="20">20</option>
+          <option value="50">50</option>
+          <option value="100">100</option>
+        </select>
+      </div>
+      <button id="exportOrders" class="secondary" type="button">导出 Excel</button>
+      <button id="refreshOrders" type="button">刷新订单</button>
+    </section>
+
+    <div id="stats" class="stats"></div>
+
+    <section class="panel">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th style="width:210px">订单</th>
+              <th>商品</th>
+              <th style="width:120px">金额</th>
+              <th style="width:130px">状态</th>
+              <th style="width:210px">收件信息</th>
+              <th style="width:170px">物流</th>
+              <th style="width:190px">操作</th>
+            </tr>
+          </thead>
+          <tbody id="ordersBody">
+            <tr><td colspan="7" class="empty">正在加载订单...</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="pager">
+        <span id="pagerInfo">-</span>
+        <div class="pager-actions">
+          <button id="prevPage" class="subtle" type="button">上一页</button>
+          <button id="nextPage" class="subtle" type="button">下一页</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div id="paymentModal" class="modal" aria-hidden="true">
+    <div class="modal-backdrop" data-action="close-payment-modal"></div>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="paymentModalTitle">
+      <h3 id="paymentModalTitle">修改待付款金额</h3>
+      <p class="modal-desc">仅待付款订单可修改客户付款金额。保存后，该订单下次发起支付将按新金额生成支付单。</p>
+      <div class="modal-grid">
+        <div class="modal-summary">
+          <strong id="paymentModalOrderNo">-</strong>
+          <div class="small">当前付款金额：<span id="paymentModalCurrentAmount">-</span></div>
+        </div>
+        <div>
+          <label for="paymentModalInput">新付款金额（元）</label>
+          <input id="paymentModalInput" type="number" min="0.01" step="0.01" placeholder="请输入新的付款金额">
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button id="paymentModalCancel" class="subtle" type="button">取消</button>
+        <button id="paymentModalSubmit" type="button">保存金额</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/admin-order-export.js"></script>
+  <script>
+    const state = {
+      orders: [],
+      total: 0,
+      pageNum: 1,
+      expandedOrderNo: '',
+      loading: false,
+      paymentEditor: null,
+      authToken: '',
+      adminProfile: null,
+    };
+    const $ = (id) => document.getElementById(id);
+    const AUTH_STORAGE_KEY = 'admin-auth-v1';
+
+    const expressNameMap = {
+      SF: '顺丰速运',
+      YTO: '圆通速递',
+      ZTO: '中通快递',
+      STO: '申通快递',
+      YD: '韵达快递',
+      JD: '京东物流',
+      EMS: 'EMS',
+      DBL: '德邦快递',
+      JTSD: '极兔速递',
+    };
+
+    function headers() {
+      const result = { 'Content-Type': 'application/json' };
+      if (state.authToken) result['x-admin-token'] = state.authToken;
+      return result;
+    }
+
+    function readStoredAuth() {
+      const raw = localStorage.getItem(AUTH_STORAGE_KEY);
+      if (raw) return raw;
+      try {
+        if (window.parent && window.parent !== window && window.parent.localStorage) {
+          return window.parent.localStorage.getItem(AUTH_STORAGE_KEY);
+        }
+      } catch (err) {
+        return '';
+      }
+      return '';
+    }
+
+    function setAuth(token, account) {
+      state.authToken = String(token || '');
+      state.adminProfile = account || null;
+      localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({
+        token: state.authToken,
+        account: state.adminProfile,
+      }));
+      updateAuthUI();
+    }
+
+    function clearAuth() {
+      state.authToken = '';
+      state.adminProfile = null;
+      localStorage.removeItem(AUTH_STORAGE_KEY);
+      try {
+        if (window.parent && window.parent !== window && window.parent.localStorage) {
+          window.parent.localStorage.removeItem(AUTH_STORAGE_KEY);
+        }
+      } catch (err) {
+        // ignore cleanup errors
+      }
+      updateAuthUI();
+    }
+
+    function updateAuthUI() {
+      const status = $('authStatus');
+      if (state.adminProfile) {
+        status.textContent = `已登录：${state.adminProfile.displayName || state.adminProfile.username} / ${state.adminProfile.roleType || 'sales'}`;
+      } else {
+        status.textContent = '未登录';
+      }
+      $('adminLogout').disabled = !state.authToken;
+    }
+
+    function ensureAuthenticated() {
+      if (state.authToken) return true;
+      return false;
+    }
+
+    function redirectToLogin() {
+      if (window.parent && window.parent !== window) {
+        window.parent.location.replace('/admin');
+        return;
+      }
+      window.location.replace('/admin');
+    }
+
+    function showNotice(message, isError = false) {
+      const notice = $('notice');
+      notice.textContent = message;
+      notice.className = `notice show${isError ? ' error' : ''}`;
+    }
+
+    function closePaymentModal() {
+      state.paymentEditor = null;
+      $('paymentModal').classList.remove('show');
+      $('paymentModal').setAttribute('aria-hidden', 'true');
+      $('paymentModalInput').value = '';
+      $('paymentModalSubmit').disabled = false;
+    }
+
+    function openPaymentModal(orderNo, currentAmount) {
+      state.paymentEditor = {
+        orderNo,
+        currentAmount: Number(currentAmount || 0),
+      };
+      $('paymentModalOrderNo').textContent = `订单：${orderNo}`;
+      $('paymentModalCurrentAmount').textContent = money(currentAmount || 0);
+      $('paymentModalInput').value = (Number(currentAmount || 0) / 100).toFixed(2);
+      $('paymentModal').classList.add('show');
+      $('paymentModal').setAttribute('aria-hidden', 'false');
+      $('paymentModalInput').focus();
+      $('paymentModalInput').select();
+    }
+
+    function money(fen) {
+      return `¥${(Number(fen || 0) / 100).toFixed(2)}`;
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#39;');
+    }
+
+    async function requestJson(url, options = {}) {
+      const response = await fetch(url, options);
+      const json = await response.json().catch(() => ({}));
+      if (response.status === 401) {
+        clearAuth();
+        redirectToLogin();
+      }
+      if (!response.ok || json.code !== 0) {
+        throw new Error(json.message || `请求失败：${response.status}`);
+      }
+      return json;
+    }
+
+    async function restoreAdminAuth() {
+      const raw = readStoredAuth();
+      if (!raw) {
+        updateAuthUI();
+        redirectToLogin();
+        return;
+      }
+      try {
+        const stored = JSON.parse(raw);
+        state.authToken = String(stored?.token || '');
+        state.adminProfile = stored?.account || null;
+        updateAuthUI();
+        const json = await requestJson('/api/admin/me', { headers: headers() });
+        state.adminProfile = json.data || state.adminProfile;
+        updateAuthUI();
+        await loadDashboard();
+      } catch (err) {
+        clearAuth();
+        redirectToLogin();
+      }
+    }
+
+    async function loadDashboard() {
+      if (!ensureAuthenticated()) return;
+      await loadOrders(1);
+    }
+
+    function orderStatusClass(order) {
+      if (order.rightsNo) return 'after-sale';
+      if (Number(order.orderStatus) === 10) return 'pending';
+      if (Number(order.orderStatus) === 40) return 'shipped';
+      if (Number(order.orderStatus) === 50) return 'done';
+      if (Number(order.orderStatus) === 60) return 'returning';
+      if (Number(order.orderStatus) === 70) return 'refunded';
+      return '';
+    }
+
+    function goodsSummary(order) {
+      const goods = order.orderItemVOs || [];
+      if (!goods.length) return '<span class="small">无商品信息</span>';
+      return goods.map((item) => `
+        <div class="goods-title">${escapeHtml(item.goodsName || '商品')}</div>
+        <div class="goods-sub">SKU：${escapeHtml(item.skuId || '-')} / 数量：${escapeHtml(item.buyQuantity || 1)}</div>
+      `).join('');
+    }
+
+    function getFilteredOrders() {
+      const keyword = $('keyword').value.trim().toLowerCase();
+      return keyword
+        ? state.orders.filter((order) => {
+            const payment = order.paymentVO || {};
+            return [order.orderNo, payment.transactionId, payment.channelTrxNo]
+              .filter(Boolean)
+              .some((value) => String(value).toLowerCase().includes(keyword));
+          })
+        : state.orders;
+    }
+
+    function updateExportButtonState() {
+      $('exportOrders').disabled = state.loading || !getFilteredOrders().length;
+    }
+
+    function renderStats(tabCounts = []) {
+      const labels = {
+        '-1': '全部',
+        5: '待付款',
+        10: '待发货',
+        40: '待收货',
+        50: '已完成',
+        60: '退货中',
+        70: '已退款',
+      };
+      const current = $('statusFilter').value;
+      $('stats').innerHTML = tabCounts.map((item) => `
+        <button class="stat ${String(item.tabType) === current ? 'active' : ''}" data-status="${item.tabType}" type="button">
+          ${labels[item.tabType] || item.tabType} ${item.orderNum}
+        </button>
+      `).join('');
+    }
+
+    function renderOrders() {
+      const orders = getFilteredOrders();
+
+      updateExportButtonState();
+
+      if (!orders.length) {
+        $('ordersBody').innerHTML = '<tr><td colspan="7" class="empty">没有找到订单</td></tr>';
+        return;
+      }
+
+      $('ordersBody').innerHTML = orders.map((order) => {
+        const logistics = order.logisticsVO || {};
+        const payment = order.paymentVO || {};
+        const isPendingDelivery = Number(order.orderStatus) === 10;
+        const isPendingPay = Number(order.orderStatus) === 5;
+        const canStartReturn = [40, 50].includes(Number(order.orderStatus));
+        const canRefund = Number(order.orderStatus) === 60;
+        const isExpanded = state.expandedOrderNo === order.orderNo;
+        const receiver = [logistics.receiverName, logistics.receiverPhone].filter(Boolean).join(' ');
+        const address = [
+          logistics.receiverProvince,
+          logistics.receiverCity,
+          logistics.receiverCountry,
+          logistics.receiverArea,
+          logistics.receiverAddress,
+        ].filter(Boolean).join(' ');
+        return `
+          <tr>
+            <td>
+              <div class="order-no">${escapeHtml(order.orderNo)}</div>
+              <div class="small">ID：${escapeHtml(order.orderId || '-')}</div>
+              <div class="small">交易单：${escapeHtml(payment.transactionId || payment.channelTrxNo || '-')}</div>
+              ${order.salesOpenid ? `<div class="small">销售：${escapeHtml(order.salesNameSnapshot || '-')} / ${escapeHtml(order.salesOpenid)}</div>` : ''}
+            </td>
+            <td class="goods">${goodsSummary(order)}</td>
+            <td>
+              <strong>${money(order.paymentAmount || order.totalAmount)}</strong>
+              <div class="small">商品：${money(order.goodsAmount || order.totalAmount)}</div>
+            </td>
+            <td>
+              <span class="badge ${orderStatusClass(order)}">${escapeHtml(order.orderStatusName || '-')}</span>
+              ${order.rightsNo ? `<div class="small">售后：${escapeHtml(order.rightsNo)}</div>` : ''}
+            </td>
+            <td>
+              <div>${escapeHtml(receiver || '-')}</div>
+              <div class="small">${escapeHtml(address || '-')}</div>
+            </td>
+            <td>
+              <div>${escapeHtml(logistics.logisticsCompanyName || '-')}</div>
+              <div class="small">${escapeHtml(logistics.logisticsNo || '')}</div>
+            </td>
+            <td>
+              <div class="row-actions">
+                ${isPendingPay ? `<button type="button" data-action="edit-payment" data-order-no="${escapeHtml(order.orderNo)}" data-payment-amount="${escapeHtml(order.paymentAmount || order.totalAmount || '0')}">改金额</button>` : ''}
+                ${isPendingDelivery ? `<button type="button" data-action="toggle-ship" data-order-no="${escapeHtml(order.orderNo)}">${isExpanded ? '收起发货' : '同步发货'}</button>` : ''}
+                ${canStartReturn ? `<button type="button" data-action="start-return" data-order-no="${escapeHtml(order.orderNo)}">退货</button>` : ''}
+                ${canRefund ? `<button type="button" data-action="refund" data-order-no="${escapeHtml(order.orderNo)}" data-payment-amount="${escapeHtml(order.paymentAmount || order.totalAmount || '0')}">退款</button>` : ''}
+                <button type="button" class="secondary" data-action="view" data-order-no="${escapeHtml(order.orderNo)}">查看</button>
+              </div>
+            </td>
+          </tr>
+          <tr class="ship-row ${isExpanded ? 'active' : ''}">
+            <td colspan="7">
+              ${renderShipForm(order)}
+            </td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    function renderShipForm(order) {
+      const logistics = order.logisticsVO || {};
+      const itemDesc = (order.orderItemVOs || []).map((item) => item.goodsName).filter(Boolean).join('、').slice(0, 120);
+      return `
+        <div class="ship-form" data-ship-form="${escapeHtml(order.orderNo)}">
+          <div>
+            <label>物流单号</label>
+            <input data-field="trackingNo" placeholder="请输入真实快递单号" value="${escapeHtml(logistics.logisticsNo || '')}">
+          </div>
+          <div>
+            <label>快递公司</label>
+            <select data-field="expressCompany">
+              ${Object.keys(expressNameMap).map((code) => `
+                <option value="${code}" ${code === (logistics.logisticsCompanyCode || 'SF') ? 'selected' : ''}>${code}</option>
+              `).join('')}
+            </select>
+          </div>
+          <div>
+            <label>显示名称</label>
+            <input data-field="expressCompanyName" value="${escapeHtml(logistics.logisticsCompanyName || '顺丰速运')}">
+          </div>
+          <div>
+            <label>收件手机号</label>
+            <input data-field="receiverContact" value="${escapeHtml(logistics.receiverPhone || '')}">
+          </div>
+          <div>
+            <label>商品描述</label>
+            <input data-field="itemDesc" value="${escapeHtml(itemDesc)}">
+          </div>
+          <div>
+            <label>&nbsp;</label>
+            <div class="row-actions">
+              <button type="button" data-action="submit-ship" data-order-no="${escapeHtml(order.orderNo)}">确认同步</button>
+              <label class="checkbox-line"><input data-field="localOnly" type="checkbox">仅本地</label>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function updatePager() {
+      if ($('pageSize').value === 'all') {
+        $('pagerInfo').textContent = `共 ${state.total} 单，当前显示全部`;
+        $('prevPage').disabled = true;
+        $('nextPage').disabled = true;
+        updateExportButtonState();
+        return;
+      }
+
+      const pageSize = Number($('pageSize').value || 50);
+      const start = state.total ? (state.pageNum - 1) * pageSize + 1 : 0;
+      const end = Math.min(state.pageNum * pageSize, state.total);
+      $('pagerInfo').textContent = `第 ${state.pageNum} 页，显示 ${start}-${end} / 共 ${state.total} 单`;
+      $('prevPage').disabled = state.pageNum <= 1 || state.loading;
+      $('nextPage').disabled = state.pageNum * pageSize >= state.total || state.loading;
+      updateExportButtonState();
+    }
+    const orderExport = window.createAdminOrderExport({
+      money,
+      escapeHtml,
+      showNotice,
+      updateExportButtonState,
+      getStatusText: () => $('statusFilter').selectedOptions[0]?.textContent?.trim() || '全部订单',
+    });
+
+    function exportOrdersToExcel() {
+      orderExport.exportOrders(getFilteredOrders());
+    }
+
+    async function loadOrders(pageNum = state.pageNum) {
+      if (!ensureAuthenticated()) return;
+      state.loading = true;
+      $('refreshOrders').disabled = true;
+      $('exportOrders').disabled = true;
+      $('ordersBody').innerHTML = '<tr><td colspan="7" class="empty">正在加载订单...</td></tr>';
+      updatePager();
+      try {
+        const params = new URLSearchParams({
+          pageNum: String(pageNum),
+          pageSize: $('pageSize').value,
+          orderStatus: $('statusFilter').value,
+        });
+        const json = await requestJson(`/api/admin/orders?${params.toString()}`, {
+          headers: headers(),
+        });
+        state.orders = json.data.orders || [];
+        state.total = Number(json.data.total || 0);
+        state.pageNum = Number(json.data.pageNum || pageNum);
+        state.expandedOrderNo = '';
+        renderStats(json.data.tabCounts || []);
+        renderOrders();
+        showNotice('订单列表已刷新');
+      } catch (err) {
+        state.orders = [];
+        state.total = 0;
+        $('ordersBody').innerHTML = `<tr><td colspan="7" class="empty">${escapeHtml(err.message)}</td></tr>`;
+        showNotice(err.message, true);
+      } finally {
+        state.loading = false;
+        $('refreshOrders').disabled = false;
+        updatePager();
+      }
+    }
+
+    function formatDateTime(value) {
+      if (!value) return '-';
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return '-';
+      return date.toLocaleString('zh-CN', { hour12: false });
+    }
+
+    async function updateOrderPaymentAmount(orderNo, currentAmount) {
+      if (!ensureAuthenticated()) return;
+      const value = $('paymentModalInput').value.trim();
+      const amount = Math.round(Number(value) * 100);
+      if (!Number.isFinite(amount) || amount <= 0) {
+        showNotice('请输入有效金额', true);
+        $('paymentModalInput').focus();
+        return;
+      }
+      const submitButton = $('paymentModalSubmit');
+      submitButton.disabled = true;
+      try {
+        await requestJson('/api/admin/order/payment-amount', {
+          method: 'POST',
+          headers: headers(),
+          body: JSON.stringify({ orderNo, paymentAmount: amount }),
+        });
+        closePaymentModal();
+        showNotice('订单付款金额已更新');
+        await loadOrders(state.pageNum);
+      } catch (err) {
+        showNotice(err.message, true);
+      } finally {
+        submitButton.disabled = false;
+      }
+    }
+
+    async function shipOrder(orderNo) {
+      if (!ensureAuthenticated()) return;
+      const form = Array.from(document.querySelectorAll('[data-ship-form]'))
+        .find((node) => node.dataset.shipForm === orderNo);
+      if (!form) return;
+
+      const read = (field) => form.querySelector(`[data-field="${field}"]`);
+      const payload = {
+        orderNo,
+        trackingNo: read('trackingNo').value.trim(),
+        expressCompany: read('expressCompany').value.trim(),
+        expressCompanyName: read('expressCompanyName').value.trim(),
+        receiverContact: read('receiverContact').value.trim(),
+        itemDesc: read('itemDesc').value.trim(),
+        localOnly: read('localOnly').checked,
+      };
+
+      if (!payload.trackingNo || !payload.expressCompany) {
+        showNotice('请填写物流单号和快递公司', true);
+        return;
+      }
+
+      const button = form.querySelector('[data-action="submit-ship"]');
+      button.disabled = true;
+      try {
+        const json = await requestJson('/api/admin/order/ship', {
+          method: 'POST',
+          headers: headers(),
+          body: JSON.stringify(payload),
+        });
+        showNotice(json.message || '发货同步成功');
+        await loadOrders(state.pageNum);
+      } catch (err) {
+        showNotice(err.message, true);
+      } finally {
+        button.disabled = false;
+      }
+    }
+
+    async function startReturn(orderNo) {
+      if (!ensureAuthenticated()) return;
+      const reason = window.prompt(`请输入退货备注（可留空）\n订单：${orderNo}`, '客户申请退货');
+      if (reason === null) return;
+      if (!window.confirm(`确认将订单 ${orderNo} 改为“退货中”？`)) return;
+
+      try {
+        const json = await requestJson('/api/admin/order/return', {
+          method: 'POST',
+          headers: headers(),
+          body: JSON.stringify({ orderNo, reason }),
+        });
+        showNotice(json.message || '订单已进入退货中');
+        await loadOrders(state.pageNum);
+      } catch (err) {
+        showNotice(err.message, true);
+      }
+    }
+
+    async function refundOrder(orderNo, currentAmount) {
+      if (!ensureAuthenticated()) return;
+      const currentYuan = (Number(currentAmount || 0) / 100).toFixed(2);
+      const value = window.prompt(`请输入退款金额（元）\n订单：${orderNo}`, currentYuan);
+      if (value === null) return;
+      const amount = Math.round(Number(value) * 100);
+      if (!Number.isFinite(amount) || amount <= 0) {
+        showNotice('请输入有效退款金额', true);
+        return;
+      }
+      const reason = window.prompt('请输入退款原因', '订单退款');
+      if (reason === null) return;
+      if (!window.confirm(`确认向微信支付发起退款？\n订单：${orderNo}\n金额：${money(amount)}`)) return;
+
+      try {
+        const json = await requestJson('/api/admin/order/refund', {
+          method: 'POST',
+          headers: headers(),
+          body: JSON.stringify({ orderNo, refundAmount: amount, reason }),
+        });
+        showNotice(json.message || '退款已发起');
+        await loadOrders(state.pageNum);
+      } catch (err) {
+        showNotice(err.message, true);
+      }
+    }
+
+    $('ordersBody').addEventListener('click', (event) => {
+      const target = event.target.closest('[data-action]');
+      if (!target) return;
+      const action = target.dataset.action;
+      const orderNo = target.dataset.orderNo;
+
+      if (action === 'toggle-ship') {
+        state.expandedOrderNo = state.expandedOrderNo === orderNo ? '' : orderNo;
+        renderOrders();
+      }
+      if (action === 'submit-ship') {
+        shipOrder(orderNo);
+      }
+      if (action === 'edit-payment') {
+        openPaymentModal(orderNo, target.dataset.paymentAmount);
+      }
+      if (action === 'start-return') {
+        startReturn(orderNo);
+      }
+      if (action === 'refund') {
+        refundOrder(orderNo, target.dataset.paymentAmount);
+      }
+      if (action === 'view') {
+        if (!ensureAuthenticated()) return;
+        state.expandedOrderNo = '';
+        window.open(`/api/admin/order/${encodeURIComponent(orderNo)}${state.authToken ? `?token=${encodeURIComponent(state.authToken)}` : ''}`, '_blank');
+      }
+    });
+
+    $('ordersBody').addEventListener('change', (event) => {
+      const select = event.target.closest('[data-field="expressCompany"]');
+      if (!select) return;
+      const form = select.closest('[data-ship-form]');
+      const nameInput = form.querySelector('[data-field="expressCompanyName"]');
+      nameInput.value = expressNameMap[select.value] || select.value;
+    });
+
+    $('stats').addEventListener('click', (event) => {
+      const target = event.target.closest('[data-status]');
+      if (!target) return;
+      $('statusFilter').value = target.dataset.status;
+      state.pageNum = 1;
+      loadOrders(1);
+    });
+
+    $('keyword').addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') renderOrders();
+    });
+    $('keyword').addEventListener('input', renderOrders);
+    $('statusFilter').addEventListener('change', () => loadOrders(1));
+    $('pageSize').addEventListener('change', () => loadOrders(1));
+    $('exportOrders').addEventListener('click', exportOrdersToExcel);
+    $('refreshOrders').addEventListener('click', () => loadOrders(state.pageNum));
+    $('paymentModalCancel').addEventListener('click', closePaymentModal);
+    $('paymentModal').addEventListener('click', (event) => {
+      const target = event.target.closest('[data-action="close-payment-modal"]');
+      if (!target) return;
+      closePaymentModal();
+    });
+    $('paymentModalSubmit').addEventListener('click', async () => {
+      if (!state.paymentEditor) return;
+      await updateOrderPaymentAmount(state.paymentEditor.orderNo, state.paymentEditor.currentAmount);
+    });
+    $('paymentModalInput').addEventListener('keydown', async (event) => {
+      if (event.key === 'Enter' && state.paymentEditor) {
+        event.preventDefault();
+        await updateOrderPaymentAmount(state.paymentEditor.orderNo, state.paymentEditor.currentAmount);
+      }
+      if (event.key === 'Escape') {
+        closePaymentModal();
+      }
+    });
+    $('prevPage').addEventListener('click', () => loadOrders(Math.max(1, state.pageNum - 1)));
+    $('nextPage').addEventListener('click', () => loadOrders(state.pageNum + 1));
+    $('adminLogout').addEventListener('click', () => {
+      clearAuth();
+      redirectToLogin();
+    });
+
+    restoreAdminAuth();
+  </script>
+</body>
+</html>

@@ -62,6 +62,17 @@ const User = sequelize.define("User", {
     defaultValue: 0,
     comment: "性别",
   },
+  latestUsersVisible: {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,
+    defaultValue: false,
+    comment: "是否允许在后台最新登录用户列表中展示",
+  },
+  latestUsersVisibleAt: {
+    type: DataTypes.DATE,
+    allowNull: true,
+    comment: "触发后台最新登录用户展示的时间",
+  },
 });
 
 // 商品数据模型
@@ -302,6 +313,17 @@ const Order = sequelize.define("Order", {
     allowNull: true,
     comment: "用户openid",
   },
+  salesOpenid: {
+    type: DataTypes.STRING(128),
+    allowNull: true,
+    comment: "归属销售openid",
+  },
+  salesNameSnapshot: {
+    type: DataTypes.STRING(80),
+    allowNull: false,
+    defaultValue: "",
+    comment: "下单时销售名称快照",
+  },
   orderStatus: {
     type: DataTypes.INTEGER,
     defaultValue: 5,
@@ -503,6 +525,131 @@ const AdminWhitelist = sequelize.define("AdminWhitelist", {
     allowNull: true,
     defaultValue: "",
     comment: "备注",
+  },
+});
+
+const SalesProfile = sequelize.define("SalesProfile", {
+  openid: {
+    type: DataTypes.STRING(128),
+    allowNull: false,
+    unique: true,
+    comment: "销售微信用户openid",
+  },
+  salesName: {
+    type: DataTypes.STRING(80),
+    allowNull: false,
+    defaultValue: "",
+    comment: "销售名称",
+  },
+  userNickName: {
+    type: DataTypes.STRING(80),
+    allowNull: false,
+    defaultValue: "",
+    comment: "用户昵称快照",
+  },
+  remark: {
+    type: DataTypes.STRING(100),
+    allowNull: true,
+    defaultValue: "",
+    comment: "备注",
+  },
+});
+
+const UserSalesBinding = sequelize.define("UserSalesBinding", {
+  userOpenid: {
+    type: DataTypes.STRING(128),
+    allowNull: false,
+    unique: true,
+    comment: "用户openid",
+  },
+  salesOpenid: {
+    type: DataTypes.STRING(128),
+    allowNull: false,
+    comment: "绑定销售openid",
+  },
+  salesNameSnapshot: {
+    type: DataTypes.STRING(80),
+    allowNull: false,
+    defaultValue: "",
+    comment: "绑定时销售名称快照",
+  },
+  sourcePage: {
+    type: DataTypes.STRING(64),
+    allowNull: false,
+    defaultValue: "",
+    comment: "绑定来源页面标识",
+  },
+  sourcePath: {
+    type: DataTypes.STRING(255),
+    allowNull: false,
+    defaultValue: "",
+    comment: "绑定来源页面路径",
+  },
+  sourceSpuId: {
+    type: DataTypes.STRING(64),
+    allowNull: false,
+    defaultValue: "",
+    comment: "来源商品spuId",
+  },
+  boundAt: {
+    type: DataTypes.DATE,
+    allowNull: false,
+    defaultValue: DataTypes.NOW,
+    comment: "最近绑定时间",
+  },
+});
+
+const UserSalesBindingRecord = sequelize.define("UserSalesBindingRecord", {
+  userOpenid: {
+    type: DataTypes.STRING(128),
+    allowNull: false,
+    comment: "用户openid",
+  },
+  salesOpenid: {
+    type: DataTypes.STRING(128),
+    allowNull: false,
+    comment: "绑定销售openid",
+  },
+  salesNameSnapshot: {
+    type: DataTypes.STRING(80),
+    allowNull: false,
+    defaultValue: "",
+    comment: "绑定时销售名称快照",
+  },
+  previousSalesOpenid: {
+    type: DataTypes.STRING(128),
+    allowNull: true,
+    comment: "上一次绑定销售openid",
+  },
+  previousSalesNameSnapshot: {
+    type: DataTypes.STRING(80),
+    allowNull: false,
+    defaultValue: "",
+    comment: "上一次绑定销售名称快照",
+  },
+  sourcePage: {
+    type: DataTypes.STRING(64),
+    allowNull: false,
+    defaultValue: "",
+    comment: "绑定来源页面标识",
+  },
+  sourcePath: {
+    type: DataTypes.STRING(255),
+    allowNull: false,
+    defaultValue: "",
+    comment: "绑定来源页面路径",
+  },
+  sourceSpuId: {
+    type: DataTypes.STRING(64),
+    allowNull: false,
+    defaultValue: "",
+    comment: "来源商品spuId",
+  },
+  boundAt: {
+    type: DataTypes.DATE,
+    allowNull: false,
+    defaultValue: DataTypes.NOW,
+    comment: "绑定时间",
   },
 });
 
@@ -829,6 +976,9 @@ const syncModels = [
   Order,
   AfterSale,
   AdminWhitelist,
+  SalesProfile,
+  UserSalesBinding,
+  UserSalesBindingRecord,
   CouponTemplate,
   CouponRecord,
   Sample,
@@ -845,6 +995,17 @@ async function ensureColumn(tableName, columnName, definition) {
 }
 
 async function ensureOnlineSchema() {
+  await ensureColumn("Users", "latestUsersVisible", {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,
+    defaultValue: false,
+    comment: "是否允许在后台最新登录用户列表中展示",
+  });
+  await ensureColumn("Users", "latestUsersVisibleAt", {
+    type: DataTypes.DATE,
+    allowNull: true,
+    comment: "触发后台最新登录用户展示的时间",
+  });
   await ensureColumn("HomeAssets", "content", {
     type: DataTypes.TEXT,
     defaultValue: "",
@@ -897,6 +1058,17 @@ async function ensureOnlineSchema() {
     defaultValue: null,
     comment: "下单时优惠券快照",
   });
+  await ensureColumn("Orders", "salesOpenid", {
+    type: DataTypes.STRING(128),
+    allowNull: true,
+    comment: "归属销售openid",
+  });
+  await ensureColumn("Orders", "salesNameSnapshot", {
+    type: DataTypes.STRING(80),
+    allowNull: false,
+    defaultValue: "",
+    comment: "下单时销售名称快照",
+  });
 }
 
 // 数据库初始化方法
@@ -921,6 +1093,9 @@ module.exports = {
   Order,
   AfterSale,
   AdminWhitelist,
+  SalesProfile,
+  UserSalesBinding,
+  UserSalesBindingRecord,
   CouponTemplate,
   CouponRecord,
   Sample,

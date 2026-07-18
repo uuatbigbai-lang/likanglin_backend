@@ -1,0 +1,481 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>销售管理</title>
+  <link rel="icon" href="data:,">
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: #f4f6f8;
+      color: #172033;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    .shell {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 24px 20px 56px;
+    }
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: flex-start;
+      margin-bottom: 18px;
+    }
+    h1 {
+      margin: 0;
+      font-size: 26px;
+      line-height: 34px;
+    }
+    .muted,
+    .small {
+      color: #667085;
+      font-size: 14px;
+      line-height: 22px;
+    }
+    .small {
+      font-size: 12px;
+      line-height: 18px;
+    }
+    .panel {
+      background: #fff;
+      border: 1px solid #e4e7ec;
+      border-radius: 8px;
+      box-shadow: 0 8px 22px rgba(20, 35, 60, 0.05);
+    }
+    .admin-card {
+      padding: 16px;
+    }
+    .auth-status {
+      padding: 10px 12px;
+      border: 1px solid #dbe6f3;
+      border-radius: 6px;
+      background: #f8fbff;
+      color: #1f5f9f;
+      font-size: 13px;
+      line-height: 20px;
+    }
+    .auth-actions,
+    .card-head,
+    .row-actions {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+    .auth-actions,
+    .card-head {
+      justify-content: space-between;
+    }
+    .notice {
+      display: none;
+      margin-bottom: 16px;
+      padding: 10px 12px;
+      border-radius: 6px;
+      background: #ecfdf3;
+      color: #027a48;
+      font-size: 14px;
+      line-height: 22px;
+      white-space: pre-wrap;
+    }
+    .notice.error {
+      background: #fef3f2;
+      color: #b42318;
+    }
+    .notice.show { display: block; }
+    button {
+      min-height: 40px;
+      border: 0;
+      border-radius: 6px;
+      padding: 0 14px;
+      background: #2472c8;
+      color: #fff;
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    button.subtle {
+      background: #f2f4f7;
+      color: #344054;
+    }
+    button:disabled {
+      cursor: not-allowed;
+      opacity: 0.55;
+    }
+    .table-wrap {
+      overflow-x: auto;
+    }
+    .section-stack {
+      display: grid;
+      gap: 18px;
+    }
+    table {
+      width: 100%;
+      min-width: 920px;
+      border-collapse: collapse;
+    }
+    th,
+    td {
+      padding: 13px 14px;
+      border-bottom: 1px solid #eef2f6;
+      text-align: left;
+      vertical-align: top;
+      font-size: 14px;
+      line-height: 22px;
+    }
+    th {
+      background: #f8fafc;
+      color: #475467;
+      font-size: 12px;
+      line-height: 18px;
+      font-weight: 800;
+    }
+    tr:hover td {
+      background: #fbfdff;
+    }
+    .empty {
+      padding: 42px 18px;
+      text-align: center;
+      color: #667085;
+    }
+    @media (max-width: 920px) {
+      .topbar {
+        flex-direction: column;
+      }
+      .auth-actions,
+      .card-head {
+        flex-wrap: wrap;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div>
+        <h1>销售管理</h1>
+        <p class="muted">查看销售名字、卖货数量、销售额和注册时间。销售账号仍然从后台首页的“最新登录用户”中添加。</p>
+      </div>
+      <div class="panel admin-card">
+        <div id="authStatus" class="auth-status">正在校验登录状态...</div>
+        <div class="auth-actions" style="margin-top:10px">
+          <button id="backDashboard" class="subtle" type="button">返回订单后台</button>
+          <button id="adminLogout" class="subtle" type="button">退出登录</button>
+        </div>
+      </div>
+    </header>
+
+    <div id="notice" class="notice"></div>
+
+    <section class="panel admin-card">
+      <div class="card-head" style="margin-bottom:12px">
+        <div>
+          <h2 style="margin:0;font-size:18px">销售列表</h2>
+          <div class="small" style="margin-top:4px">统计口径：已进入待发货、待收货、已完成、退货中的订单。</div>
+        </div>
+        <button id="refreshSales" type="button">刷新</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th style="width:180px">销售名字</th>
+              <th style="width:280px">openid</th>
+              <th style="width:120px">订单数</th>
+              <th style="width:120px">卖出货数</th>
+              <th style="width:140px">销售额</th>
+              <th style="width:120px">绑定用户数</th>
+              <th style="width:180px">注册时间</th>
+              <th style="width:120px">操作</th>
+            </tr>
+          </thead>
+          <tbody id="salesBody">
+            <tr><td colspan="8" class="empty">正在加载销售数据...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="section-stack" style="margin-top:18px">
+      <section class="panel admin-card">
+        <div class="card-head" style="margin-bottom:12px">
+          <div>
+            <h2 style="margin:0;font-size:18px">当前绑定关系</h2>
+            <div class="small" style="margin-top:4px">每个用户当前只会保留一条最新绑定关系。</div>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th style="width:260px">用户openid</th>
+                <th style="width:180px">销售</th>
+                <th style="width:140px">来源页</th>
+                <th style="width:120px">商品SPU</th>
+                <th style="width:220px">绑定时间</th>
+              </tr>
+            </thead>
+            <tbody id="bindingBody">
+              <tr><td colspan="5" class="empty">正在加载绑定关系...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel admin-card">
+        <div class="card-head" style="margin-bottom:12px">
+          <div>
+            <h2 style="margin:0;font-size:18px">绑定记录</h2>
+            <div class="small" style="margin-top:4px">展示最近 200 条绑定流水，可查看绑定或换绑时间。</div>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th style="width:220px">绑定时间</th>
+                <th style="width:250px">用户openid</th>
+                <th style="width:180px">新销售</th>
+                <th style="width:180px">原销售</th>
+                <th style="width:140px">来源页</th>
+                <th style="width:120px">商品SPU</th>
+              </tr>
+            </thead>
+            <tbody id="bindingRecordBody">
+              <tr><td colspan="6" class="empty">正在加载绑定记录...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <script>
+    const state = {
+      authToken: '',
+      adminProfile: null,
+    };
+    const AUTH_STORAGE_KEY = 'admin-auth-v1';
+    const $ = (id) => document.getElementById(id);
+
+    function headers() {
+      const result = { 'Content-Type': 'application/json' };
+      if (state.authToken) result['x-admin-token'] = state.authToken;
+      return result;
+    }
+
+    function readStoredAuth() {
+      const raw = localStorage.getItem(AUTH_STORAGE_KEY);
+      if (raw) return raw;
+      try {
+        if (window.parent && window.parent !== window && window.parent.localStorage) {
+          return window.parent.localStorage.getItem(AUTH_STORAGE_KEY);
+        }
+      } catch (err) {
+        return '';
+      }
+      return '';
+    }
+
+    function money(fen) {
+      return `¥${(Number(fen || 0) / 100).toFixed(2)}`;
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#39;');
+    }
+
+    function formatDateTime(value) {
+      if (!value) return '-';
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return '-';
+      return date.toLocaleString('zh-CN', { hour12: false });
+    }
+
+    function updateAuthUI() {
+      const status = $('authStatus');
+      if (state.adminProfile) {
+        status.textContent = `已登录：${state.adminProfile.displayName || state.adminProfile.username} / ${state.adminProfile.roleType || 'sales'}`;
+      } else {
+        status.textContent = '未登录';
+      }
+      $('adminLogout').disabled = !state.authToken;
+    }
+
+    function clearAuth() {
+      state.authToken = '';
+      state.adminProfile = null;
+      localStorage.removeItem(AUTH_STORAGE_KEY);
+      try {
+        if (window.parent && window.parent !== window && window.parent.localStorage) {
+          window.parent.localStorage.removeItem(AUTH_STORAGE_KEY);
+        }
+      } catch (err) {
+        // ignore cleanup errors
+      }
+      updateAuthUI();
+    }
+
+    function redirectToLogin() {
+      if (window.parent && window.parent !== window) {
+        window.parent.location.replace('/admin');
+        return;
+      }
+      window.location.replace('/admin');
+    }
+
+    function showNotice(message, isError = false) {
+      const notice = $('notice');
+      notice.textContent = message;
+      notice.className = `notice show${isError ? ' error' : ''}`;
+    }
+
+    async function requestJson(url, options = {}) {
+      const response = await fetch(url, options);
+      const json = await response.json().catch(() => ({}));
+      if (response.status === 401) {
+        clearAuth();
+        redirectToLogin();
+      }
+      if (!response.ok || json.code !== 0) {
+        throw new Error(json.message || `请求失败：${response.status}`);
+      }
+      return json;
+    }
+
+    async function loadSales() {
+      const button = $('refreshSales');
+      button.disabled = true;
+      try {
+        const json = await requestJson('/api/admin/sales', { headers: headers() });
+        const salesList = json.data || [];
+        $('salesBody').innerHTML = salesList.length ? salesList.map((item) => `
+          <tr>
+            <td>
+              <strong>${escapeHtml(item.salesName || item.userNickName || '未命名销售')}</strong>
+              <div class="small">${escapeHtml(item.userNickName || '-')}</div>
+            </td>
+            <td>${escapeHtml(item.openid || '-')}</td>
+            <td>${escapeHtml(item.orderCount || 0)}</td>
+            <td>${escapeHtml(item.soldQuantity || 0)}</td>
+            <td>${escapeHtml(money(item.totalSalesAmount || 0))}</td>
+            <td>${escapeHtml(item.boundUserCount || 0)}</td>
+            <td>${escapeHtml(formatDateTime(item.createdAt))}</td>
+            <td>
+              <button class="subtle" type="button" data-action="delete-sales" data-openid="${escapeHtml(item.openid || '')}">删除</button>
+            </td>
+          </tr>
+        `).join('') : '<tr><td colspan="8" class="empty">暂无销售</td></tr>';
+      } catch (err) {
+        $('salesBody').innerHTML = `<tr><td colspan="8" class="empty">${escapeHtml(err.message)}</td></tr>`;
+        showNotice(err.message, true);
+      } finally {
+        button.disabled = false;
+      }
+    }
+
+    async function loadBindings() {
+      try {
+        const json = await requestJson('/api/admin/sales/bindings', { headers: headers() });
+        const bindings = json.data?.bindings || [];
+        const records = json.data?.records || [];
+        $('bindingBody').innerHTML = bindings.length ? bindings.map((item) => `
+          <tr>
+            <td>${escapeHtml(item.userOpenid || '-')}</td>
+            <td>
+              <strong>${escapeHtml(item.salesNameSnapshot || '-')}</strong>
+              <div class="small">${escapeHtml(item.salesOpenid || '-')}</div>
+            </td>
+            <td>${escapeHtml(item.sourcePage || '-')}</td>
+            <td>${escapeHtml(item.sourceSpuId || '-')}</td>
+            <td>${escapeHtml(formatDateTime(item.boundAt))}</td>
+          </tr>
+        `).join('') : '<tr><td colspan="5" class="empty">暂无绑定关系</td></tr>';
+        $('bindingRecordBody').innerHTML = records.length ? records.map((item) => `
+          <tr>
+            <td>${escapeHtml(formatDateTime(item.boundAt))}</td>
+            <td>${escapeHtml(item.userOpenid || '-')}</td>
+            <td>
+              <strong>${escapeHtml(item.salesNameSnapshot || '-')}</strong>
+              <div class="small">${escapeHtml(item.salesOpenid || '-')}</div>
+            </td>
+            <td>
+              <strong>${escapeHtml(item.previousSalesNameSnapshot || '-')}</strong>
+              <div class="small">${escapeHtml(item.previousSalesOpenid || '-')}</div>
+            </td>
+            <td>${escapeHtml(item.sourcePage || '-')}</td>
+            <td>${escapeHtml(item.sourceSpuId || '-')}</td>
+          </tr>
+        `).join('') : '<tr><td colspan="6" class="empty">暂无绑定记录</td></tr>';
+      } catch (err) {
+        $('bindingBody').innerHTML = `<tr><td colspan="5" class="empty">${escapeHtml(err.message)}</td></tr>`;
+        $('bindingRecordBody').innerHTML = `<tr><td colspan="6" class="empty">${escapeHtml(err.message)}</td></tr>`;
+        showNotice(err.message, true);
+      }
+    }
+
+    async function restoreAdminAuth() {
+      const raw = readStoredAuth();
+      if (!raw) {
+        updateAuthUI();
+        redirectToLogin();
+        return;
+      }
+      try {
+        const stored = JSON.parse(raw);
+        state.authToken = String(stored?.token || '');
+        state.adminProfile = stored?.account || null;
+        updateAuthUI();
+        const json = await requestJson('/api/admin/me', { headers: headers() });
+        state.adminProfile = json.data || state.adminProfile;
+        updateAuthUI();
+        await Promise.all([loadSales(), loadBindings()]);
+      } catch (err) {
+        clearAuth();
+        redirectToLogin();
+      }
+    }
+
+    $('salesBody').addEventListener('click', async (event) => {
+      const target = event.target.closest('[data-action="delete-sales"]');
+      if (!target) return;
+      try {
+        await requestJson(`/api/admin/sales/${encodeURIComponent(target.dataset.openid)}`, {
+          method: 'DELETE',
+          headers: headers(),
+        });
+        showNotice('销售已删除');
+        Promise.all([loadSales(), loadBindings()]);
+      } catch (err) {
+        showNotice(err.message, true);
+      }
+    });
+
+    $('refreshSales').addEventListener('click', async () => {
+      await Promise.all([loadSales(), loadBindings()]);
+      showNotice('销售和绑定数据已刷新');
+    });
+    $('backDashboard').addEventListener('click', () => {
+      if (window.parent && window.parent !== window) {
+        window.parent.postMessage({ type: 'admin:navigate', page: 'orders' }, '*');
+        return;
+      }
+      window.location.href = '/admin/dashboard?page=orders';
+    });
+    $('adminLogout').addEventListener('click', () => {
+      clearAuth();
+      redirectToLogin();
+    });
+
+    restoreAdminAuth();
+  </script>
+</body>
+</html>

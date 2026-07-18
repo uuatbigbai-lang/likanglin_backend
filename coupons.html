@@ -1,0 +1,472 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>优惠券管理</title>
+  <link rel="icon" href="data:,">
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: #f4f6f8;
+      color: #172033;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    .shell {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 24px 20px 56px;
+    }
+    .topbar {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(240px, 320px);
+      gap: 20px;
+      align-items: end;
+      margin-bottom: 18px;
+    }
+    .auth-actions {
+      display: flex;
+      gap: 10px;
+      justify-content: flex-end;
+    }
+    .auth-status {
+      padding: 10px 12px;
+      border: 1px solid #dbe6f3;
+      border-radius: 6px;
+      background: #f8fbff;
+      color: #1f5f9f;
+      font-size: 13px;
+      line-height: 20px;
+    }
+    h1 {
+      margin: 0;
+      font-size: 26px;
+      line-height: 34px;
+    }
+    .muted,
+    .small {
+      color: #667085;
+      font-size: 14px;
+      line-height: 22px;
+    }
+    .small {
+      font-size: 12px;
+      line-height: 18px;
+    }
+    .panel {
+      background: #fff;
+      border: 1px solid #e4e7ec;
+      border-radius: 8px;
+      box-shadow: 0 8px 22px rgba(20, 35, 60, 0.05);
+      overflow: hidden;
+    }
+    .admin-card {
+      padding: 16px;
+    }
+    .admin-grid {
+      display: grid;
+      grid-template-columns: minmax(280px, 0.95fr) minmax(420px, 1.4fr);
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+    .card-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+    .card-head h2 {
+      margin: 0;
+      font-size: 18px;
+    }
+    .notice {
+      display: none;
+      margin-bottom: 16px;
+      padding: 10px 12px;
+      border-radius: 6px;
+      background: #ecfdf3;
+      color: #027a48;
+      font-size: 14px;
+      line-height: 22px;
+      white-space: pre-wrap;
+    }
+    .notice.error {
+      background: #fef3f2;
+      color: #b42318;
+    }
+    .notice.show { display: block; }
+    .mini-list {
+      display: grid;
+      gap: 8px;
+      max-height: 640px;
+      overflow: auto;
+    }
+    .mini-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 10px 0;
+      border-bottom: 1px solid #eef2f6;
+      font-size: 13px;
+      line-height: 20px;
+    }
+    .inline-form {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 0.75fr);
+      gap: 10px;
+      align-items: end;
+      margin-bottom: 12px;
+    }
+    .inline-form button {
+      grid-column: 1 / -1;
+      width: 100%;
+    }
+    label {
+      display: block;
+      margin-bottom: 6px;
+      color: #344054;
+      font-size: 13px;
+      line-height: 20px;
+      font-weight: 700;
+    }
+    input {
+      width: 100%;
+      min-height: 40px;
+      border: 1px solid #d0d5dd;
+      border-radius: 6px;
+      padding: 8px 10px;
+      background: #fff;
+      color: #172033;
+      font-size: 14px;
+      outline: none;
+    }
+    input:focus {
+      border-color: #2472c8;
+      box-shadow: 0 0 0 3px rgba(36, 114, 200, 0.12);
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 24px;
+      border-radius: 999px;
+      padding: 2px 9px;
+      background: #f2f4f7;
+      color: #344054;
+      font-size: 12px;
+      font-weight: 800;
+    }
+    .badge.pending { background: #fff7e6; color: #b54708; }
+    .badge.done { background: #ecfdf3; color: #027a48; }
+    button {
+      min-height: 40px;
+      border: 0;
+      border-radius: 6px;
+      padding: 0 14px;
+      background: #2472c8;
+      color: #fff;
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    button.subtle {
+      background: #f2f4f7;
+      color: #344054;
+    }
+    button:disabled {
+      cursor: not-allowed;
+      opacity: 0.55;
+    }
+    .empty {
+      padding: 42px 18px;
+      text-align: center;
+      color: #667085;
+    }
+    @media (max-width: 920px) {
+      .topbar,
+      .admin-grid,
+      .inline-form {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div>
+        <h1>优惠券管理</h1>
+        <p class="muted">查看优惠券流水、生成归属和领取核销记录。用户与角色绑定已迁移到单独的绑定管理页。</p>
+      </div>
+      <div class="panel admin-card">
+        <div id="authStatus" class="auth-status">正在校验登录状态...</div>
+        <div class="auth-actions" style="margin-top:10px">
+          <button id="adminLogout" class="subtle" type="button">退出登录</button>
+        </div>
+      </div>
+    </header>
+
+    <div id="notice" class="notice"></div>
+
+    <section class="admin-grid">
+      <div class="panel admin-card">
+        <div class="card-head">
+          <div>
+            <h2>优惠券管理员</h2>
+            <div class="small" style="margin-top:4px">维护优惠券管理员白名单。用户角色绑定已迁移到绑定管理页。</div>
+          </div>
+          <button id="openBindingsPage" class="subtle" type="button">去绑定管理</button>
+        </div>
+        <div class="inline-form">
+          <div>
+            <label for="couponAdminOpenid">白名单 openid</label>
+            <input id="couponAdminOpenid" placeholder="请输入管理员 openid">
+          </div>
+          <div>
+            <label for="couponAdminRemark">备注</label>
+            <input id="couponAdminRemark" placeholder="可选">
+          </div>
+          <button id="addCouponAdmin" type="button">保存</button>
+        </div>
+        <div id="couponAdmins" class="mini-list"></div>
+      </div>
+
+      <div class="panel admin-card">
+        <div class="card-head">
+          <div>
+            <h2>优惠券流水</h2>
+            <div class="small" style="margin-top:4px">这里专注看券的生成、领取和核销记录。</div>
+          </div>
+          <button id="refreshCoupons" type="button">刷新</button>
+        </div>
+        <div id="couponRecords" class="mini-list"></div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const AUTH_STORAGE_KEY = 'admin-auth-v1';
+    const state = {
+      authToken: '',
+      adminProfile: null,
+    };
+    const $ = (id) => document.getElementById(id);
+
+    function headers() {
+      const result = { 'Content-Type': 'application/json' };
+      if (state.authToken) result['x-admin-token'] = state.authToken;
+      return result;
+    }
+
+    function readStoredAuth() {
+      const raw = localStorage.getItem(AUTH_STORAGE_KEY);
+      if (raw) return raw;
+      try {
+        if (window.parent && window.parent !== window && window.parent.localStorage) {
+          return window.parent.localStorage.getItem(AUTH_STORAGE_KEY);
+        }
+      } catch (err) {
+        return '';
+      }
+      return '';
+    }
+
+    function updateAuthUI() {
+      const status = $('authStatus');
+      if (state.adminProfile) {
+        status.textContent = `已登录：${state.adminProfile.displayName || state.adminProfile.username} / ${state.adminProfile.roleType || 'sales'}`;
+      } else {
+        status.textContent = '未登录';
+      }
+      $('adminLogout').disabled = !state.authToken;
+    }
+
+    function clearAuth() {
+      state.authToken = '';
+      state.adminProfile = null;
+      localStorage.removeItem(AUTH_STORAGE_KEY);
+      try {
+        if (window.parent && window.parent !== window && window.parent.localStorage) {
+          window.parent.localStorage.removeItem(AUTH_STORAGE_KEY);
+        }
+      } catch (err) {
+        // ignore cleanup errors
+      }
+      updateAuthUI();
+    }
+
+    function redirectToLogin() {
+      if (window.parent && window.parent !== window) {
+        window.parent.location.replace('/admin');
+        return;
+      }
+      window.location.replace('/admin');
+    }
+
+    function showNotice(message, isError = false) {
+      const notice = $('notice');
+      notice.textContent = message;
+      notice.className = `notice show${isError ? ' error' : ''}`;
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#39;');
+    }
+
+    async function requestJson(url, options = {}) {
+      const response = await fetch(url, options);
+      const json = await response.json().catch(() => ({}));
+      if (response.status === 401) {
+        clearAuth();
+        redirectToLogin();
+      }
+      if (!response.ok || json.code !== 0) {
+        throw new Error(json.message || `请求失败：${response.status}`);
+      }
+      return json;
+    }
+
+    async function loadCouponAdmins() {
+      const json = await requestJson('/api/admin/coupon-admins', { headers: headers() });
+      const admins = json.data || [];
+      $('couponAdmins').innerHTML = admins.length ? admins.map((item) => `
+        <div class="mini-row">
+          <div>
+            <strong>${escapeHtml(item.openid)}</strong>
+            <div class="small">${escapeHtml(item.remark || '-')}</div>
+          </div>
+          <button class="subtle" type="button" data-action="delete-coupon-admin" data-openid="${escapeHtml(item.openid)}">删除</button>
+        </div>
+      `).join('') : '<div class="empty">暂无管理员 openid</div>';
+    }
+
+    async function saveCouponAdmin() {
+      const openid = $('couponAdminOpenid').value.trim();
+      const remark = $('couponAdminRemark').value.trim();
+      if (!openid) {
+        showNotice('请填写白名单 openid', true);
+        return;
+      }
+      await requestJson('/api/admin/coupon-admins', {
+        method: 'POST',
+        headers: headers(),
+        body: JSON.stringify({ openid, remark }),
+      });
+      $('couponAdminOpenid').value = '';
+      $('couponAdminRemark').value = '';
+      showNotice('优惠券管理员已保存');
+      await loadCouponAdmins();
+    }
+
+    function couponStatusText(status) {
+      return {
+        generated: '待认领',
+        claimed: '待使用',
+        used: '已核销',
+        expired: '已作废',
+      }[status] || status || '-';
+    }
+
+    async function loadCouponRecords() {
+      const button = $('refreshCoupons');
+      button.disabled = true;
+      try {
+        const json = await requestJson('/api/admin/coupons', { headers: headers() });
+        const records = json.data || [];
+        $('couponRecords').innerHTML = records.length ? records.map((item) => `
+          <div class="mini-row">
+            <div>
+              <strong>${escapeHtml(item.title)} / ${escapeHtml(item.couponNo)}</strong>
+              <div class="small">生成：${escapeHtml(item.createdByOpenid || '-')}</div>
+              <div class="small">领取：${escapeHtml(item.claimedByOpenid || '-')}</div>
+              <div class="small">核销：${escapeHtml(item.usedByOpenid || '-')} ${item.orderNo ? ` / 订单 ${escapeHtml(item.orderNo)}` : ''}</div>
+            </div>
+            <span class="badge ${item.recordStatus === 'used' ? 'done' : item.recordStatus === 'claimed' ? 'pending' : ''}">${escapeHtml(couponStatusText(item.recordStatus))}</span>
+          </div>
+        `).join('') : '<div class="empty">暂无优惠券记录</div>';
+      } finally {
+        button.disabled = false;
+      }
+    }
+
+    async function restoreAdminAuth() {
+      const raw = readStoredAuth();
+      if (!raw) {
+        updateAuthUI();
+        redirectToLogin();
+        return;
+      }
+      try {
+        const stored = JSON.parse(raw);
+        state.authToken = String(stored?.token || '');
+        state.adminProfile = stored?.account || null;
+        updateAuthUI();
+        const json = await requestJson('/api/admin/me', { headers: headers() });
+        state.adminProfile = json.data || state.adminProfile;
+        updateAuthUI();
+        await Promise.all([
+          loadCouponAdmins(),
+          loadCouponRecords(),
+        ]);
+      } catch (err) {
+        clearAuth();
+        redirectToLogin();
+      }
+    }
+
+    $('couponAdmins').addEventListener('click', async (event) => {
+      const target = event.target.closest('[data-action="delete-coupon-admin"]');
+      if (!target) return;
+      try {
+        await requestJson(`/api/admin/coupon-admins/${encodeURIComponent(target.dataset.openid)}`, {
+          method: 'DELETE',
+          headers: headers(),
+        });
+        showNotice('优惠券管理员已删除');
+        await loadCouponAdmins();
+      } catch (err) {
+        showNotice(err.message, true);
+      }
+    });
+
+    $('addCouponAdmin').addEventListener('click', async () => {
+      try {
+        await saveCouponAdmin();
+      } catch (err) {
+        showNotice(err.message, true);
+      }
+    });
+
+    $('refreshCoupons').addEventListener('click', async () => {
+      try {
+        await loadCouponRecords();
+        showNotice('优惠券流水已刷新');
+      } catch (err) {
+        showNotice(err.message, true);
+      }
+    });
+
+    $('openBindingsPage').addEventListener('click', () => {
+      if (window.parent && window.parent !== window) {
+        window.parent.postMessage({ type: 'admin:navigate', page: 'bindings' }, '*');
+        return;
+      }
+      window.location.href = '/admin/dashboard?page=bindings';
+    });
+
+    $('adminLogout').addEventListener('click', () => {
+      clearAuth();
+      redirectToLogin();
+    });
+
+    restoreAdminAuth();
+  </script>
+</body>
+</html>

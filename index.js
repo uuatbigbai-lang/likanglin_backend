@@ -14,6 +14,9 @@ const {
   Order,
   AfterSale,
   AdminWhitelist,
+  SalesProfile,
+  UserSalesBinding,
+  UserSalesBindingRecord,
   CouponTemplate,
   CouponRecord,
   Sample,
@@ -292,6 +295,209 @@ const formatUserInfo = (user) => {
   };
 };
 
+const getSalesDisplayName = (profile = {}, fallbackNickName = '') => {
+  const data = profile && typeof profile.toJSON === 'function' ? profile.toJSON() : { ...profile };
+  return String(data.salesName || fallbackNickName || data.userNickName || '').trim();
+};
+
+const formatSalesProfile = (profile, stats = {}) => {
+  if (!profile) return null;
+  const data = typeof profile.toJSON === 'function' ? profile.toJSON() : profile;
+  return {
+    openid: data.openid || '',
+    salesName: getSalesDisplayName(data),
+    userNickName: data.userNickName || '',
+    remark: data.remark || '',
+    orderCount: Number(stats.orderCount || 0),
+    soldQuantity: Number(stats.soldQuantity || 0),
+    totalSalesAmount: Number(stats.totalSalesAmount || 0),
+    boundUserCount: Number(stats.boundUserCount || 0),
+    createdAt: data.createdAt,
+    updatedAt: data.updatedAt,
+  };
+};
+
+const buildSalesProfileWithStats = async (salesProfileOrOpenid) => {
+  let profile = salesProfileOrOpenid;
+  if (!profile) return null;
+  if (typeof profile === 'string') {
+    profile = await SalesProfile.findOne({ where: { openid: profile } });
+  }
+  if (!profile) return null;
+
+  const profileOpenid = typeof profile?.toJSON === 'function' ? profile.toJSON().openid : profile.openid;
+  const orders = await Order.findAll({
+    attributes: ['salesOpenid', 'paymentAmount', 'totalAmount', 'goodsList'],
+    where: {
+      salesOpenid: profileOpenid,
+      orderStatus: { [Op.in]: [10, 40, 50, ORDER_STATUS_RETURNING] },
+    },
+  });
+  const bindings = await UserSalesBinding.findAll({
+    where: { salesOpenid: profileOpenid },
+  });
+  const statsMap = mergeBindingStatsIntoSalesStatsMap(buildSalesStatsMap(orders), bindings);
+  return formatSalesProfile(profile, statsMap.get(profileOpenid));
+};
+
+const buildSalesStatsMap = (orders = []) => {
+  const map = new Map();
+  orders.forEach((order) => {
+    const data = typeof order?.toJSON === 'function' ? order.toJSON() : order;
+    const salesOpenid = String(data?.salesOpenid || '').trim();
+    if (!salesOpenid) return;
+    const current = map.get(salesOpenid) || {
+      orderCount: 0,
+      soldQuantity: 0,
+      totalSalesAmount: 0,
+    };
+    const goodsList = Array.isArray(data.goodsList) ? data.goodsList : [];
+    current.orderCount += 1;
+    current.soldQuantity += goodsList.reduce(
+      (sum, goods) => sum + Math.max(Number(goods.quantity || goods.buyQuantity || 1), 0),
+      0,
+    );
+    current.totalSalesAmount += Math.max(Number(data.paymentAmount || data.totalAmount || 0), 0);
+    map.set(salesOpenid, current);
+  });
+  return map;
+};
+
+const mergeBindingStatsIntoSalesStatsMap = (statsMap, bindings = []) => {
+  const map = statsMap || new Map();
+  bindings.forEach((binding) => {
+    const data = typeof binding?.toJSON === 'function' ? binding.toJSON() : binding;
+    const salesOpenid = String(data?.salesOpenid || '').trim();
+    if (!salesOpenid) return;
+    const current = map.get(salesOpenid) || {
+      orderCount: 0,
+      soldQuantity: 0,
+      totalSalesAmount: 0,
+      boundUserCount: 0,
+    };
+    current.boundUserCount += 1;
+    map.set(salesOpenid, current);
+  });
+  return map;
+};
+
+const formatUserSalesBinding = (binding) => {
+  if (!binding) return null;
+  const data = typeof binding.toJSON === 'function' ? binding.toJSON() : binding;
+  return {
+    userOpenid: data.userOpenid || '',
+    salesOpenid: data.salesOpenid || '',
+    salesNameSnapshot: data.salesNameSnapshot || '',
+    sourcePage: data.sourcePage || '',
+    sourcePath: data.sourcePath || '',
+    sourceSpuId: data.sourceSpuId || '',
+    boundAt: data.boundAt || data.updatedAt || data.createdAt || null,
+    createdAt: data.createdAt || null,
+    updatedAt: data.updatedAt || null,
+  };
+};
+
+const formatUserSalesBindingRecord = (record) => {
+  if (!record) return null;
+  const data = typeof record.toJSON === 'function' ? record.toJSON() : record;
+  return {
+    userOpenid: data.userOpenid || '',
+    salesOpenid: data.salesOpenid || '',
+    salesNameSnapshot: data.salesNameSnapshot || '',
+    previousSalesOpenid: data.previousSalesOpenid || '',
+    previousSalesNameSnapshot: data.previousSalesNameSnapshot || '',
+    sourcePage: data.sourcePage || '',
+    sourcePath: data.sourcePath || '',
+    sourceSpuId: data.sourceSpuId || '',
+    boundAt: data.boundAt || data.createdAt || null,
+    createdAt: data.createdAt || null,
+    updatedAt: data.updatedAt || null,
+  };
+};
+
+const getBoundSalesForUser = async (userOpenid) => {
+  const openid = String(userOpenid || '').trim();
+  if (!openid || openid === 'local_dev_user') return null;
+
+  const binding = await UserSalesBinding.findOne({ where: { userOpenid: openid } });
+  if (!binding) return null;
+
+  const formattedBinding = formatUserSalesBinding(binding);
+  const salesProfile = await SalesProfile.findOne({ where: { openid: formattedBinding.salesOpenid } });
+  const salesName = salesProfile
+    ? getSalesDisplayName(salesProfile, formattedBinding.salesNameSnapshot)
+    : formattedBinding.salesNameSnapshot;
+
+  return {
+    binding,
+    bindingInfo: {
+      ...formattedBinding,
+      salesNameSnapshot: salesName,
+    },
+    salesProfile,
+    salesOpenid: formattedBinding.salesOpenid,
+    salesName,
+  };
+};
+
+const bindSalesForUser = async ({
+  userOpenid,
+  salesOpenid,
+  sourcePage = '',
+  sourcePath = '',
+  sourceSpuId = '',
+}) => {
+  const normalizedUserOpenid = String(userOpenid || '').trim();
+  const normalizedSalesOpenid = String(salesOpenid || '').trim();
+  if (!normalizedUserOpenid || normalizedUserOpenid === 'local_dev_user') {
+    return { bound: false, reason: 'missing-user' };
+  }
+  if (!normalizedSalesOpenid) {
+    return { bound: false, reason: 'missing-sales' };
+  }
+
+  const salesProfile = await SalesProfile.findOne({ where: { openid: normalizedSalesOpenid } });
+  if (!salesProfile) {
+    return { bound: false, reason: 'not-sales' };
+  }
+
+  const salesName = getSalesDisplayName(salesProfile) || buildDefaultNickName(normalizedSalesOpenid);
+  const now = new Date();
+  const existing = await UserSalesBinding.findOne({ where: { userOpenid: normalizedUserOpenid } });
+  const previousInfo = existing ? formatUserSalesBinding(existing) : null;
+
+  await UserSalesBinding.upsert({
+    userOpenid: normalizedUserOpenid,
+    salesOpenid: normalizedSalesOpenid,
+    salesNameSnapshot: salesName,
+    sourcePage: String(sourcePage || '').trim(),
+    sourcePath: String(sourcePath || '').trim(),
+    sourceSpuId: String(sourceSpuId || '').trim(),
+    boundAt: now,
+  });
+
+  await UserSalesBindingRecord.create({
+    userOpenid: normalizedUserOpenid,
+    salesOpenid: normalizedSalesOpenid,
+    salesNameSnapshot: salesName,
+    previousSalesOpenid: previousInfo?.salesOpenid || null,
+    previousSalesNameSnapshot: previousInfo?.salesNameSnapshot || '',
+    sourcePage: String(sourcePage || '').trim(),
+    sourcePath: String(sourcePath || '').trim(),
+    sourceSpuId: String(sourceSpuId || '').trim(),
+    boundAt: now,
+  });
+
+  return {
+    bound: true,
+    salesOpenid: normalizedSalesOpenid,
+    salesName,
+    previousSalesOpenid: previousInfo?.salesOpenid || '',
+    previousSalesName: previousInfo?.salesNameSnapshot || '',
+    boundAt: now,
+  };
+};
+
 const saveHomeAsset = async (req, res) => {
   try {
     const assetKey = String(req.params.key || '').trim();
@@ -354,10 +560,25 @@ const normalizeSpecs = (goods) => {
 
 const isWechatPayTransactionId = (value) => /^420\d{25,}$/.test(String(value || '').trim());
 
+const markOrderPaidWithoutDelivery = async (order, transactionId, paidAt) => {
+  const nextTrajectory = mergeTrajectory(order.trajectoryVos || [], 200002);
+
+  await order.update({
+    orderStatus: 50,
+    orderStatusName: '交易完成',
+    transactionId: transactionId || order.transactionId || 'CLIENT_CONFIRMED',
+    paidAt: paidAt || order.paidAt || new Date(),
+    trajectoryVos: nextTrajectory,
+  });
+
+  return order;
+};
+
 const buildLogisticsVO = (address = {}, order = {}) => {
   const receiverAddress = address.detailAddress || address.address || '';
+  const hasReceiver = !!(address.name || address.phone || address.phoneNumber || receiverAddress);
   return {
-    logisticsType: 1,
+    logisticsType: hasReceiver ? 1 : 0,
     logisticsNo: order.logisticsNo || '',
     logisticsStatus: null,
     logisticsCompanyCode: order.logisticsCompanyCode || '',
@@ -506,12 +727,17 @@ const formatOrderForMiniProgram = (order, afterSales = []) => {
     couponAmount: String(data.couponAmount || '0'),
     couponNo: data.couponNo || '',
     couponSnapshot: data.couponSnapshot || null,
+    salesOpenid: data.salesOpenid || '',
+    salesNameSnapshot: data.salesNameSnapshot || '',
+    salesName: data.salesNameSnapshot || '',
     autoCancelTime: createTime + 30 * 60 * 1000,
     orderStatusName: displayStatusName,
     orderStatusRemark:
       Number(data.orderStatus) === 5
         ? `需支付￥${(Number(data.paymentAmount || data.totalAmount || 0) / 100).toFixed(2)}`
-        : displayStatusName,
+        : Number(data.orderStatus) === 50
+          ? '订单已完成，无需填写物流信息'
+          : displayStatusName,
     logisticsLogVO: null,
     trajectoryVos: data.trajectoryVos || [],
     invoiceStatus: 3,
@@ -649,6 +875,13 @@ const WX_TEST_DELIVERY_ID = 'TEST';
 const WX_TEST_BIZ_ID = 'test_biz_id';
 
 const LOGISTICS_ACTION_CONFIG = {
+  200002: {
+    code: '200002',
+    title: '支付成功',
+    status: '订单已完成支付',
+    orderStatus: 50,
+    orderStatusName: '交易完成',
+  },
   100001: {
     code: '100001',
     title: '已揽收',
@@ -1198,6 +1431,11 @@ app.use(express.json({
 app.use(cors());
 app.use(logger);
 
+app.get('/admin-order-export.js', (req, res) => {
+  res.type('application/javascript');
+  res.sendFile(path.join(__dirname, 'admin-order-export.js'));
+});
+
 const adminAuth = createAdminAuth({ AdminAccount });
 
 const redeemCouponForOrder = async (order) => {
@@ -1226,6 +1464,22 @@ app.get('/admin', (req, res) => {
 
 app.get('/admin/dashboard', (req, res) => {
   res.sendFile(path.join(__dirname, 'index.html'));
+});
+
+app.get('/admin/orders', (req, res) => {
+  res.sendFile(path.join(__dirname, 'orders.html'));
+});
+
+app.get('/admin/coupons', (req, res) => {
+  res.sendFile(path.join(__dirname, 'coupons.html'));
+});
+
+app.get('/admin/bindings', (req, res) => {
+  res.sendFile(path.join(__dirname, 'bindings.html'));
+});
+
+app.get('/admin/sales', (req, res) => {
+  res.sendFile(path.join(__dirname, 'sales.html'));
 });
 registerAdminAuthRoutes({ app, AdminAccount, adminAuth });
 
@@ -1258,15 +1512,71 @@ app.post('/api/user/auto-login', async (req, res) => {
       await user.update({ updatedAt: new Date() });
     }
 
+    const boundSales = await getBoundSalesForUser(openid);
+    const currentSalesProfile = await buildSalesProfileWithStats(openid);
+    const formattedUserInfo = formatUserInfo(user);
+
     res.send({
       code: 0,
       data: {
-        userInfo: formatUserInfo(user),
+        userInfo: {
+          ...formattedUserInfo,
+          isSales: !!currentSalesProfile,
+          salesRoleLabel: currentSalesProfile ? '渠道代理' : '',
+          salesName: currentSalesProfile?.salesName || '',
+          salesProfile: currentSalesProfile || null,
+        },
         isNewUser: created,
+        boundSales: boundSales?.bindingInfo || null,
       },
     });
   } catch (err) {
     console.error('自动登录失败:', err);
+    res.send({ code: -1, message: err.message });
+  }
+});
+
+app.get('/api/user/sales-profile', async (req, res) => {
+  try {
+    const openid = String(req.headers['x-wx-openid'] || '').trim() || 'local_dev_user';
+    const salesProfile = await buildSalesProfileWithStats(openid);
+    res.send({
+      code: 0,
+      data: {
+        isSales: !!salesProfile,
+        salesRoleLabel: salesProfile ? '渠道代理' : '',
+        profile: salesProfile,
+      },
+    });
+  } catch (err) {
+    res.send({ code: -1, message: err.message });
+  }
+});
+
+app.post('/api/user/sales/bind', async (req, res) => {
+  try {
+    const headerOpenid = req.headers['x-wx-openid'] || '';
+    const {
+      authorizationCode,
+      salesOpenid,
+      sourcePage = '',
+      sourcePath = '',
+      sourceSpuId = '',
+    } = req.body || {};
+    const codeOpenid = await getOpenidByCode(authorizationCode);
+    const userOpenid = headerOpenid || codeOpenid || 'local_dev_user';
+
+    const result = await bindSalesForUser({
+      userOpenid,
+      salesOpenid,
+      sourcePage,
+      sourcePath,
+      sourceSpuId,
+    });
+
+    res.send({ code: 0, data: result });
+  } catch (err) {
+    console.error('绑定销售失败:', err);
     res.send({ code: -1, message: err.message });
   }
 });
@@ -1479,10 +1789,51 @@ app.get('/api/admin/coupon-admins', adminAuth, async (req, res) => {
   }
 });
 
+app.get('/api/admin/sales', adminAuth, async (req, res) => {
+  try {
+    const salesProfiles = await SalesProfile.findAll({ order: [['createdAt', 'DESC']] });
+    const orders = await Order.findAll({
+      attributes: ['salesOpenid', 'paymentAmount', 'totalAmount', 'goodsList'],
+      where: {
+        salesOpenid: { [Op.ne]: null },
+        orderStatus: { [Op.in]: [10, 40, 50, ORDER_STATUS_RETURNING] },
+      },
+    });
+    const bindings = await UserSalesBinding.findAll();
+    const statsMap = mergeBindingStatsIntoSalesStatsMap(buildSalesStatsMap(orders), bindings);
+    res.send({
+      code: 0,
+      data: salesProfiles.map((profile) => formatSalesProfile(profile, statsMap.get(profile.openid))),
+    });
+  } catch (err) {
+    res.send({ code: -1, message: err.message });
+  }
+});
+
+app.get('/api/admin/sales/bindings', adminAuth, async (req, res) => {
+  try {
+    const bindings = await UserSalesBinding.findAll({ order: [['boundAt', 'DESC'], ['updatedAt', 'DESC']] });
+    const records = await UserSalesBindingRecord.findAll({
+      order: [['boundAt', 'DESC'], ['createdAt', 'DESC']],
+      limit: 200,
+    });
+    res.send({
+      code: 0,
+      data: {
+        bindings: bindings.map(formatUserSalesBinding),
+        records: records.map(formatUserSalesBindingRecord),
+      },
+    });
+  } catch (err) {
+    res.send({ code: -1, message: err.message });
+  }
+});
+
 app.get('/api/admin/latest-users', adminAuth, async (req, res) => {
   try {
     const users = await User.findAll({
-      attributes: ['openid', 'nickName', 'avatarUrl', 'phoneNumber', 'updatedAt', 'createdAt'],
+      attributes: ['openid', 'nickName', 'avatarUrl', 'phoneNumber', 'updatedAt', 'createdAt', 'latestUsersVisibleAt'],
+      where: { latestUsersVisible: true },
       order: [['updatedAt', 'DESC']],
       limit: 5,
     });
@@ -1490,7 +1841,38 @@ app.get('/api/admin/latest-users', adminAuth, async (req, res) => {
       ...user,
       updatedAt: users[index].updatedAt,
       createdAt: users[index].createdAt,
+      latestUsersVisibleAt: users[index].latestUsersVisibleAt,
     })) });
+  } catch (err) {
+    res.send({ code: -1, message: err.message });
+  }
+});
+
+app.post('/api/user/latest-users-visible', async (req, res) => {
+  try {
+    const openid = String(req.headers['x-wx-openid'] || '').trim();
+    if (!openid) {
+      return res.send({ code: -1, message: '缺少用户身份，无法登记展示资格' });
+    }
+
+    const user = await User.findOne({ where: { openid } });
+    if (!user) {
+      return res.send({ code: -1, message: '用户不存在，请重新进入小程序后再试' });
+    }
+
+    const now = new Date();
+    await user.update({
+      latestUsersVisible: true,
+      latestUsersVisibleAt: now,
+    });
+
+    res.send({
+      code: 0,
+      data: {
+        latestUsersVisible: true,
+        latestUsersVisibleAt: now,
+      },
+    });
   } catch (err) {
     res.send({ code: -1, message: err.message });
   }
@@ -1509,9 +1891,57 @@ app.post('/api/admin/coupon-admins', adminAuth, async (req, res) => {
   }
 });
 
+app.post('/api/admin/sales', adminAuth, async (req, res) => {
+  try {
+    const openid = String(req.body?.openid || '').trim();
+    const salesName = String(req.body?.salesName || '').trim();
+    const remark = String(req.body?.remark || '').trim();
+    if (!openid) return res.send({ code: -1, message: '请填写 openid' });
+
+    const user = await User.findOne({ where: { openid } });
+    if (!user) {
+      return res.send({ code: -1, message: '该 openid 对应用户不存在，请先让用户登录一次小程序' });
+    }
+
+    const finalSalesName = salesName || String(user.nickName || '').trim() || buildDefaultNickName(openid);
+    await SalesProfile.upsert({
+      openid,
+      salesName: finalSalesName,
+      userNickName: String(user.nickName || '').trim(),
+      remark,
+    });
+
+    const salesProfiles = await SalesProfile.findAll({ order: [['createdAt', 'DESC']] });
+    const orders = await Order.findAll({
+      attributes: ['salesOpenid', 'paymentAmount', 'totalAmount', 'goodsList'],
+      where: {
+        salesOpenid: { [Op.ne]: null },
+        orderStatus: { [Op.in]: [10, 40, 50, ORDER_STATUS_RETURNING] },
+      },
+    });
+    const bindings = await UserSalesBinding.findAll();
+    const statsMap = mergeBindingStatsIntoSalesStatsMap(buildSalesStatsMap(orders), bindings);
+    res.send({
+      code: 0,
+      data: salesProfiles.map((profile) => formatSalesProfile(profile, statsMap.get(profile.openid))),
+    });
+  } catch (err) {
+    res.send({ code: -1, message: err.message });
+  }
+});
+
 app.delete('/api/admin/coupon-admins/:openid', adminAuth, async (req, res) => {
   try {
     await AdminWhitelist.destroy({ where: { openid: req.params.openid } });
+    res.send({ code: 0 });
+  } catch (err) {
+    res.send({ code: -1, message: err.message });
+  }
+});
+
+app.delete('/api/admin/sales/:openid', adminAuth, async (req, res) => {
+  try {
+    await SalesProfile.destroy({ where: { openid: req.params.openid } });
     res.send({ code: 0 });
   } catch (err) {
     res.send({ code: -1, message: err.message });
@@ -2323,6 +2753,7 @@ app.post('/api/order/settle', async (req, res) => {
   try {
     const openid = req.headers['x-wx-openid'] || 'local_dev_user';
     const { goodsRequestList = [] } = req.body;
+    const boundSales = await getBoundSalesForUser(openid);
 
     // 构造 skuDetailVos
     const skuDetailVos = goodsRequestList.map((item) => ({
@@ -2380,6 +2811,9 @@ app.post('/api/order/settle', async (req, res) => {
         totalCouponAmount,
         totalDeliveryFee: 0,
         invoiceSupport: 0,
+        salesOpenid: boundSales?.salesOpenid || '',
+        salesNameSnapshot: boundSales?.salesName || '',
+        channelAgentName: boundSales?.salesName || '',
         selectedCoupon: selectedCoupon
           ? { ...formatCouponRecord(selectedCoupon.coupon), discountAmount: String(selectedCoupon.amount) }
           : null,
@@ -3300,12 +3734,15 @@ app.post('/api/order/create', async (req, res) => {
     const couponSnapshot = selectedCoupon
       ? { ...formatCouponRecord(selectedCoupon.coupon), discountAmount: String(couponAmount) }
       : null;
+    const boundSales = await getBoundSalesForUser(openid);
 
     const orderNo = 'ORD' + Date.now() + Math.random().toString(36).slice(2, 6);
 
     const order = await Order.create({
       orderNo,
       openid,
+      salesOpenid: boundSales?.salesOpenid || null,
+      salesNameSnapshot: boundSales?.salesName || '',
       orderStatus: 5,
       orderStatusName: '待付款',
       totalAmount: String(calcTotal),
@@ -3408,7 +3845,21 @@ app.post('/api/order/pay', async (req, res) => {
     const openid = headerOpenid || codeOpenid || order.openid || 'local_dev_user';
 
     if (openid && openid !== 'local_dev_user' && openid !== order.openid) {
-      await order.update({ openid });
+      const boundSales = await getBoundSalesForUser(openid);
+      await order.update({
+        openid,
+        salesOpenid: boundSales?.salesOpenid || order.salesOpenid,
+        salesNameSnapshot: boundSales?.salesName || order.salesNameSnapshot,
+      });
+    }
+    if ((!order.salesOpenid || !order.salesNameSnapshot) && openid && openid !== 'local_dev_user') {
+      const boundSales = await getBoundSalesForUser(openid);
+      if (boundSales?.salesOpenid) {
+        await order.update({
+          salesOpenid: boundSales.salesOpenid,
+          salesNameSnapshot: boundSales.salesName,
+        });
+      }
     }
 
     let payData = null;
@@ -3484,12 +3935,7 @@ app.post('/api/order/paid', async (req, res) => {
     }
 
     if (Number(order.orderStatus) === 5) {
-      await order.update({
-        orderStatus: 10,
-        orderStatusName: '待发货',
-        transactionId: transactionId || order.transactionId || 'CLIENT_CONFIRMED',
-        paidAt: order.paidAt || new Date(),
-      });
+      await markOrderPaidWithoutDelivery(order, transactionId);
       await redeemCouponForOrder(order);
     }
 
@@ -3515,12 +3961,11 @@ app.post('/api/pay/wechat/notify', async (req, res) => {
     const payResult = decryptNotifyResource(notifyBody.resource);
     const order = await Order.findOne({ where: { orderNo: payResult.out_trade_no } });
     if (order && payResult.trade_state === 'SUCCESS') {
-      await order.update({
-        orderStatus: 10,
-        orderStatusName: '待发货',
-        transactionId: payResult.transaction_id,
-        paidAt: payResult.success_time ? new Date(payResult.success_time) : new Date(),
-      });
+      await markOrderPaidWithoutDelivery(
+        order,
+        payResult.transaction_id,
+        payResult.success_time ? new Date(payResult.success_time) : new Date(),
+      );
       await redeemCouponForOrder(order);
       console.log('✅ 微信支付成功:', order.orderNo, payResult.transaction_id);
     }
