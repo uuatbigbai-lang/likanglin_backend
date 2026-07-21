@@ -13,6 +13,7 @@
     return orders.map((order) => {
       const logistics = order.logisticsVO || {};
       const payment = order.paymentVO || {};
+      const couponSnapshot = order.couponSnapshot || {};
       const items = Array.isArray(order.orderItemVOs) ? order.orderItemVOs : [];
       const goodsText = items.length
         ? items.map((item) => [
@@ -36,6 +37,21 @@
       const statusText = order.rightsNo
         ? `${order.orderStatusName || '-'}\n售后：${order.rightsNo}`
         : (order.orderStatusName || '-');
+      const couponRemarkParts = [];
+      if (order.couponNo || couponSnapshot.couponNo) {
+        couponRemarkParts.push(`优惠券名称：${couponSnapshot.title || '-'}`);
+        couponRemarkParts.push(`优惠券类型ID：${couponSnapshot.templateType || '-'}`);
+        couponRemarkParts.push(`优惠券券号：${order.couponNo || couponSnapshot.couponNo || '-'}`);
+        couponRemarkParts.push(`优惠券规则：${couponSnapshot.ruleType || '-'}`);
+        couponRemarkParts.push(`优惠抵扣：${money(order.couponAmount || couponSnapshot.discountAmount || 0)}`);
+        if (couponSnapshot.ruleType === 'discount') {
+          couponRemarkParts.push(`折扣券说明：本单使用折扣券，类型ID为 ${couponSnapshot.templateType || '-'}`);
+        }
+      }
+      if (order.remark) {
+        couponRemarkParts.unshift(`订单备注：${order.remark}`);
+      }
+      const exportRemark = couponRemarkParts.join('\n') || '-';
 
       return {
         订单号: order.orderNo || '',
@@ -46,6 +62,7 @@
         状态: statusText,
         收件信息: `${receiver || '-'}\n${receiverAddress || '-'}`,
         物流: logisticsText,
+        备注: exportRemark,
         商品明细JSON: JSON.stringify(items),
         支付信息JSON: JSON.stringify(payment),
         收货信息JSON: JSON.stringify(logistics),

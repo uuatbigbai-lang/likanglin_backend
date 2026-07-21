@@ -1063,6 +1063,40 @@ const getWechatAccessToken = async () => {
   return wechatAccessTokenCache.token;
 };
 
+const getWechatPhoneNumberByCode = async (code) => {
+  const normalizedCode = String(code || '').trim();
+  if (!normalizedCode) {
+    throw new Error('缺少手机号授权 code');
+  }
+
+  const accessToken = await getWechatAccessToken();
+  if (!accessToken) {
+    throw new Error('缺少微信 access_token 配置');
+  }
+
+  const result = await requestWechatJson({
+    method: 'POST',
+    path: `/wxa/business/getuserphonenumber?access_token=${encodeURIComponent(accessToken)}`,
+    data: { code: normalizedCode },
+  });
+
+  if (result.errcode) {
+    throw new Error(result.errmsg || `获取手机号失败：${result.errcode}`);
+  }
+
+  const phoneInfo = result.phone_info || {};
+  const phoneNumber = String(phoneInfo.purePhoneNumber || phoneInfo.phoneNumber || '').trim();
+  if (!phoneNumber) {
+    throw new Error('微信未返回手机号');
+  }
+
+  return {
+    phoneNumber,
+    countryCode: String(phoneInfo.countryCode || '').trim(),
+    watermark: phoneInfo.watermark || null,
+  };
+};
+
 const normalizeReturnAddress = (address = {}) => ({
   name: address.name || '',
   mobile: address.mobile || address.phone || address.phoneNumber || '',
@@ -1791,6 +1825,119 @@ app.get('/api/user/sales-profile', async (req, res) => {
       },
     });
   } catch (err) {
+    res.send({ code: -1, message: err.message });
+  }
+});
+
+app.post('/api/user/profile', async (req, res) => {
+  try {
+    const openid = String(req.headers['x-wx-openid'] || '').trim() || 'local_dev_user';
+    const hasNickName = Object.prototype.hasOwnProperty.call(req.body || {}, 'nickName');
+    const hasAvatarUrl = Object.prototype.hasOwnProperty.call(req.body || {}, 'avatarUrl');
+    const rawNickName = String(req.body?.nickName || '');
+    const nickName = rawNickName.trim();
+    const avatarUrl = String(req.body?.avatarUrl || '').trim();
+
+    if (!hasNickName && !hasAvatarUrl) {
+      res.send({ code: -1, message: '请提供要更新的资料' });
+      return;
+    }
+    if (hasNickName && !nickName) {
+      res.send({ code: -1, message: '昵称不能为空' });
+      return;
+    }
+    if (hasNickName && Array.from(nickName).length > 15) {
+      res.send({ code: -1, message: '昵称最多15个字' });
+      return;
+    }
+
+    const [user] = await User.findOrCreate({
+      where: { openid },
+      defaults: {
+        openid,
+        nickName: nickName || buildDefaultNickName(openid),
+        avatarUrl: avatarUrl || DEFAULT_USER_AVATAR,
+        phoneNumber: '',
+        gender: 0,
+      },
+    });
+
+    const updatePayload = {
+      updatedAt: new Date(),
+    };
+    if (hasNickName && user.nickName !== nickName) {
+      updatePayload.nickName = nickName;
+    }
+    if (hasAvatarUrl && avatarUrl && user.avatarUrl !== avatarUrl) {
+      updatePayload.avatarUrl = avatarUrl;
+    }
+    await user.update(updatePayload);
+
+    if (hasNickName) {
+      await SalesProfile.update(
+        { userNickName: nickName },
+        { where: { openid } },
+      );
+    }
+
+    res.send({
+      code: 0,
+      data: {
+        userInfo: formatUserInfo(user),
+      },
+    });
+  } catch (err) {
+    console.error('更新用户资料失败:', err);
+    res.send({ code: -1, message: err.message });
+  }
+});
+
+app.post('/api/user/phone-login', async (req, res) => {
+  try {
+    const headerOpenid = String(req.headers['x-wx-openid'] || '').trim();
+    const authorizationCode = String(req.body?.authorizationCode || '').trim();
+    const phoneCode = String(req.body?.code || '').trim();
+    const codeOpenid = await getOpenidByCode(authorizationCode);
+    const openid = headerOpenid || codeOpenid || 'local_dev_user';
+
+    if (!phoneCode) {
+      res.send({ code: -1, message: '请先授权手机号' });
+      return;
+    }
+
+    const phoneInfo = await getWechatPhoneNumberByCode(phoneCode);
+    const [user] = await User.findOrCreate({
+      where: { openid },
+      defaults: {
+        openid,
+        nickName: buildDefaultNickName(openid),
+        avatarUrl: DEFAULT_USER_AVATAR,
+        phoneNumber: phoneInfo.phoneNumber,
+        gender: 0,
+      },
+    });
+
+    await user.update({
+      phoneNumber: phoneInfo.phoneNumber,
+      updatedAt: new Date(),
+    });
+
+    const currentSalesProfile = await buildSalesProfileWithStats(openid);
+    res.send({
+      code: 0,
+      data: {
+        userInfo: {
+          ...formatUserInfo(user),
+          phoneNumber: phoneInfo.phoneNumber,
+          isSales: !!currentSalesProfile,
+          salesRoleLabel: currentSalesProfile ? '渠道代理' : '',
+          salesName: currentSalesProfile?.salesName || '',
+          salesProfile: currentSalesProfile || null,
+        },
+      },
+    });
+  } catch (err) {
+    console.error('手机号登录失败:', err);
     res.send({ code: -1, message: err.message });
   }
 });
