@@ -127,7 +127,7 @@ const DEFAULT_COUPON_TEMPLATES = [
     value: 1,
     thresholdAmount: 0,
     minQuantity: 3,
-    desc: '同一订单购买满3件，免除最低价1件商品金额',
+    desc: '订单内商品每满3件自动减1件，按商品数量累计抵扣',
     sort: 20,
   },
   {
@@ -224,6 +224,7 @@ const formatCouponRecord = (coupon) => {
     used: '已核销',
     expired: '已作废',
   };
+  const buyXGetYDesc = `订单内商品每满${template.minQuantity || 3}件，自动减${template.value || 1}件`;
   return {
     key: data.couponNo,
     couponNo: data.couponNo,
@@ -239,7 +240,7 @@ const formatCouponRecord = (coupon) => {
     tag: statusTextMap[data.status] || '已失效',
     statusText: statusTextMap[data.status] || '已失效',
     canVoid: ['generated', 'claimed'].includes(data.status),
-    desc: template.desc || '',
+    desc: template.ruleType === 'buy_x_get_y' ? buyXGetYDesc : (template.desc || ''),
     title: data.title || template.title || '优惠券',
     timeLimit: '长期有效',
     currency: template.ruleType === 'discount' ? '' : '¥',
@@ -259,7 +260,7 @@ const formatCouponRecord = (coupon) => {
     claimedAt: data.claimedAt,
     usedAt: data.usedAt,
     useNotes: template.ruleType === 'buy_x_get_y'
-      ? `订单商品总数满${template.minQuantity || 3}件时自动抵扣最低价${template.value || 1}件。`
+      ? `订单内商品数量每满${template.minQuantity || 3}件，自动抵扣${template.value || 1}件商品金额；多种商品会一起累计计算。`
       : template.ruleType === 'employee_price'
         ? '仅对已配置员工价的商品生效，下单时按员工价自动抵扣差额。'
         : getScopedSpuIds(template).length

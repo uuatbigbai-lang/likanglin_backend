@@ -932,7 +932,10 @@
 
     function formatDateTime(value) {
       if (!value) return '-';
-      const date = new Date(value);
+      const normalizedValue = typeof value === 'string' && /^\d+$/.test(value)
+        ? Number(value)
+        : value;
+      const date = new Date(normalizedValue);
       if (Number.isNaN(date.getTime())) return '-';
       return date.toLocaleString('zh-CN', { hour12: false });
     }
