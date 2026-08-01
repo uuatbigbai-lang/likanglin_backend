@@ -87,6 +87,7 @@ const DEFAULT_USER_AVATAR =
 
 const ORDER_STATUS_RETURNING = 60;
 const ORDER_STATUS_REFUNDED = 70;
+const ORDER_AUTO_CANCEL_MS = Math.max(Number(process.env.ORDER_AUTO_CANCEL_MS) || 30 * 60 * 1000, 60 * 1000);
 
 const DEFAULT_COUPON_TEMPLATES = [
   {
@@ -383,6 +384,34 @@ const getEligibleGoodsForCoupon = (template = {}, goodsList = []) => {
   return goodsList.filter((goods) => scopeSet.has(String(goods.spuId || '').trim()));
 };
 
+const buildBuyXGetYGroups = (goodsList = []) => {
+  const grouped = new Map();
+  goodsList.forEach((goods) => {
+    const spuId = String(goods.spuId || '').trim();
+    const skuId = String(goods.skuId || '').trim();
+    const price = Math.max(Number(goods.price || goods.settlePrice || goods.actualPrice || 0), 0);
+    const quantity = Math.max(Number(goods.quantity || goods.buyQuantity || 1), 0);
+    if (!quantity || !price) return;
+    const key = `${spuId}::${skuId}::${price}`;
+    const current = grouped.get(key) || { price, quantity: 0 };
+    current.quantity += quantity;
+    grouped.set(key, current);
+  });
+  return Array.from(grouped.values());
+};
+
+const calculateBuyXGetYDiscount = (template = {}, goodsList = []) => {
+  const minQuantity = Math.max(Number(template.minQuantity || 3), 1);
+  const freeQuantity = Math.max(Number(template.value || 1), 1);
+  if (freeQuantity >= minQuantity) return 0;
+
+  return buildBuyXGetYGroups(goodsList).reduce((sum, item) => {
+    const matchedRounds = Math.floor(item.quantity / minQuantity);
+    if (matchedRounds <= 0) return sum;
+    return sum + (matchedRounds * freeQuantity * item.price);
+  }, 0);
+};
+
 const calculateCouponDiscount = (coupon, goodsList = [], totalAmount = 0) => {
   if (!coupon || coupon.status !== 'claimed') return 0;
   const amount = Math.max(Number(totalAmount || 0), 0);
@@ -405,19 +434,7 @@ const calculateCouponDiscount = (coupon, goodsList = [], totalAmount = 0) => {
     return Math.min(Math.max(Number(template.value || 0), 0), Math.max(eligibleAmount - 1, 0));
   }
   if (template.ruleType === 'buy_x_get_y') {
-    const units = [];
-    goodsList.forEach((goods) => {
-      const qty = Math.max(Number(goods.quantity || goods.buyQuantity || 1), 0);
-      const price = Math.max(Number(goods.price || goods.settlePrice || goods.actualPrice || 0), 0);
-      for (let index = 0; index < qty; index += 1) units.push(price);
-    });
-    const minQuantity = Math.max(Number(template.minQuantity || 3), 1);
-    const freeQuantity = Math.max(Number(template.value || 1), 1);
-    if (units.length < minQuantity) return 0;
-    return units
-      .sort((left, right) => left - right)
-      .slice(0, freeQuantity)
-      .reduce((sum, price) => sum + price, 0);
+    return calculateBuyXGetYDiscount(template, eligibleGoodsList);
   }
   if (template.ruleType === 'employee_price') {
     return goodsList.reduce((sum, goods) => {
@@ -450,8 +467,16 @@ const getCouponUnavailableReason = (coupon, goodsList = []) => {
     if (!hasEmployeeGoods) return `${template.title}仅对已配置员工价的商品可用`;
   }
   if (template.ruleType === 'buy_x_get_y') {
-    const totalQuantity = goodsList.reduce((sum, goods) => sum + Math.max(Number(goods.quantity || goods.buyQuantity || 1), 0), 0);
-    if (totalQuantity < (template.minQuantity || 3)) return `${template.title}需当前订单满${template.minQuantity || 3}件商品可用`;
+    const eligibleTotalQuantity = eligibleGoodsList.reduce(
+      (sum, goods) => sum + Math.max(Number(goods.quantity || goods.buyQuantity || 1), 0),
+      0,
+    );
+    if (eligibleTotalQuantity < (template.minQuantity || 3)) {
+      return `${template.title}需单个商品满${template.minQuantity || 3}件可用`;
+    }
+    if (calculateBuyXGetYDiscount(template, eligibleGoodsList) <= 0) {
+      return `${template.title}需单个商品达到买赠数量后可用`;
+    }
   }
   if (template.thresholdAmount) {
     return `${template.title}需订单满${(template.thresholdAmount / 100).toFixed(2)}元可用`;
@@ -465,6 +490,57 @@ const buildDefaultNickName = (openid = '') => {
     .slice(-4)
     .toUpperCase() || 'GUEST';
   return `小林${suffix}`;
+};
+
+const getOrderExpireTime = (order) => {
+  const data = order && typeof order.toJSON === 'function' ? order.toJSON() : { ...order };
+  const createdAt = new Date(data.createdAt || Date.now()).getTime();
+  return createdAt + ORDER_AUTO_CANCEL_MS;
+};
+
+const isPendingPaymentOrderExpired = (order, now = Date.now()) => {
+  const data = order && typeof order.toJSON === 'function' ? order.toJSON() : { ...order };
+  if (Number(data.orderStatus) !== 5) return false;
+  if (data.paidAt) return false;
+  return getOrderExpireTime(data) <= now;
+};
+
+const clearExpiredPendingOrders = async ({ orderNo, orderId } = {}) => {
+  const where = {
+    orderStatus: 5,
+    createdAt: {
+      [Op.lte]: new Date(Date.now() - ORDER_AUTO_CANCEL_MS),
+    },
+  };
+
+  if (orderNo || orderId) {
+    const identifiers = [];
+    if (orderNo) identifiers.push({ orderNo: String(orderNo).trim() });
+    if (orderId && /^\d+$/.test(String(orderId))) identifiers.push({ id: Number(orderId) });
+    if (!identifiers.length) return 0;
+    where[Op.or] = identifiers;
+  }
+
+  return Order.destroy({ where });
+};
+
+const startExpiredPendingOrderCleanupTask = () => {
+  const runCleanup = async () => {
+    try {
+      const deletedCount = await clearExpiredPendingOrders();
+      if (deletedCount > 0) {
+        console.log(`🧹 已删除 ${deletedCount} 条超时未支付订单`);
+      }
+    } catch (err) {
+      console.error('清理超时未支付订单失败:', err.message);
+    }
+  };
+
+  runCleanup();
+  const timer = setInterval(runCleanup, 5 * 60 * 1000);
+  if (typeof timer.unref === 'function') {
+    timer.unref();
+  }
 };
 
 const formatUserInfo = (user) => {
@@ -1025,7 +1101,7 @@ const formatOrderForMiniProgram = (order, afterSales = []) => {
     salesOpenid: data.salesOpenid || '',
     salesNameSnapshot: data.salesNameSnapshot || '',
     salesName: data.salesNameSnapshot || '',
-    autoCancelTime: createTime + 30 * 60 * 1000,
+    autoCancelTime: createTime + ORDER_AUTO_CANCEL_MS,
     orderStatusName: displayStatusName,
     orderStatusRemark:
       Number(data.orderStatus) === 5
@@ -1797,6 +1873,10 @@ app.get('/admin/dashboard', (req, res) => {
 
 app.get('/admin/orders', (req, res) => {
   res.sendFile(path.join(__dirname, 'orders.html'));
+});
+
+app.get('/admin/order/:id', (req, res) => {
+  res.sendFile(path.join(__dirname, 'order-detail.html'));
 });
 
 app.get('/admin/coupons', (req, res) => {
@@ -3685,6 +3765,7 @@ app.post('/api/after-sale/cancel', async (req, res) => {
 // 订单列表
 app.get('/api/order/list', async (req, res) => {
   try {
+    await clearExpiredPendingOrders();
     const pageNum = Math.max(Number(req.query.pageNum) || 1, 1);
     const pageSize = Math.max(Number(req.query.pageSize) || 10, 1);
     const orderStatus = req.query.orderStatus;
@@ -3728,6 +3809,7 @@ app.get('/api/order/list', async (req, res) => {
 app.get('/api/order/detail/:id', async (req, res) => {
   try {
     const id = req.params.id;
+    await clearExpiredPendingOrders({ orderNo: id, orderId: id });
     const where = {
       [Op.or]: [{ orderNo: id }],
     };
@@ -3992,6 +4074,7 @@ app.post('/api/order/wechat/msg-jump-path', adminAuth, async (req, res) => {
 app.get('/api/admin/order/:id', adminAuth, async (req, res) => {
   try {
     const id = req.params.id;
+    await clearExpiredPendingOrders({ orderNo: id, orderId: id });
     const conditions = [{ orderNo: id }];
     if (/^\d+$/.test(id)) {
       conditions.push({ id: Number(id) });
@@ -4011,6 +4094,7 @@ app.get('/api/admin/order/:id', adminAuth, async (req, res) => {
 
 app.get('/api/admin/orders', adminAuth, async (req, res) => {
   try {
+    await clearExpiredPendingOrders();
     const pageNum = Math.max(Number(req.query.pageNum) || 1, 1);
     const showAll = req.query.pageSize === 'all';
     const pageSize = showAll ? undefined : Math.max(Number(req.query.pageSize) || 50, 1);
@@ -4255,6 +4339,7 @@ app.post('/api/admin/order/refund', adminAuth, async (req, res) => {
 // 创建订单
 app.post('/api/order/create', async (req, res) => {
   try {
+    await clearExpiredPendingOrders();
     const headerOpenid = req.headers['x-wx-openid'] || '';
     const {
       goodsList = [],
@@ -4382,6 +4467,7 @@ app.post('/api/order/pay', async (req, res) => {
   try {
     const headerOpenid = req.headers['x-wx-openid'] || '';
     const { orderId, orderNo, authorizationCode } = req.body || {};
+    await clearExpiredPendingOrders({ orderNo, orderId });
     const conditions = [];
 
     if (orderNo) {
@@ -4396,10 +4482,14 @@ app.post('/api/order/pay', async (req, res) => {
 
     const order = await Order.findOne({ where: { [Op.or]: conditions } });
     if (!order) {
-      return res.send({ code: -1, message: '订单不存在' });
+      return res.send({ code: -1, message: '订单不存在或已超时删除' });
     }
     if (Number(order.orderStatus) !== 5) {
       return res.send({ code: -1, message: '当前订单状态不可支付' });
+    }
+    if (isPendingPaymentOrderExpired(order)) {
+      await order.destroy();
+      return res.send({ code: -1, message: '订单已超时删除，请重新下单' });
     }
 
     const codeOpenid = await getOpenidByCode(authorizationCode);
@@ -4569,6 +4659,7 @@ async function bootstrap() {
   await initDB();
   await ensureDefaultCouponTemplates();
   startAutoConfirmReceivedTask();
+  startExpiredPendingOrderCleanupTask();
 
   // 本地开发模式下自动插入种子数据（SQLite 内存库每次重启都是空的）
   if (!process.env.MYSQL_ADDRESS) {

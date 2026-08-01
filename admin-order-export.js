@@ -56,6 +56,7 @@
       return {
         订单号: order.orderNo || '',
         订单ID: order.orderId || '',
+        下单时间: formatExcelDate(order.createTime || order.createdAt || ''),
         微信交易单号: payment.transactionId || payment.channelTrxNo || payment.traceNo || '',
         商品: goodsText,
         金额: `${money(order.paymentAmount || order.totalAmount)}\n商品：${money(order.goodsAmount || order.totalAmount)}`,

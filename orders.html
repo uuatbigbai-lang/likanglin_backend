@@ -485,13 +485,14 @@
               <th>商品</th>
               <th style="width:120px">金额</th>
               <th style="width:130px">状态</th>
+              <th style="width:170px">下单时间</th>
               <th style="width:210px">收件信息</th>
               <th style="width:170px">物流</th>
               <th style="width:190px">操作</th>
             </tr>
           </thead>
           <tbody id="ordersBody">
-            <tr><td colspan="7" class="empty">正在加载订单...</td></tr>
+            <tr><td colspan="8" class="empty">正在加载订单...</td></tr>
           </tbody>
         </table>
       </div>
@@ -760,7 +761,7 @@
       updateExportButtonState();
 
       if (!orders.length) {
-        $('ordersBody').innerHTML = '<tr><td colspan="7" class="empty">没有找到订单</td></tr>';
+        $('ordersBody').innerHTML = '<tr><td colspan="8" class="empty">没有找到订单</td></tr>';
         return;
       }
 
@@ -797,6 +798,7 @@
               <span class="badge ${orderStatusClass(order)}">${escapeHtml(order.orderStatusName || '-')}</span>
               ${order.rightsNo ? `<div class="small">售后：${escapeHtml(order.rightsNo)}</div>` : ''}
             </td>
+            <td>${escapeHtml(formatDateTime(order.createTime || order.createdAt))}</td>
             <td>
               <div>${escapeHtml(receiver || '-')}</div>
               <div class="small">${escapeHtml(address || '-')}</div>
@@ -816,7 +818,7 @@
             </td>
           </tr>
           <tr class="ship-row ${isExpanded ? 'active' : ''}">
-            <td colspan="7">
+            <td colspan="8">
               ${renderShipForm(order)}
             </td>
           </tr>
@@ -898,7 +900,7 @@
       state.loading = true;
       $('refreshOrders').disabled = true;
       $('exportOrders').disabled = true;
-      $('ordersBody').innerHTML = '<tr><td colspan="7" class="empty">正在加载订单...</td></tr>';
+      $('ordersBody').innerHTML = '<tr><td colspan="8" class="empty">正在加载订单...</td></tr>';
       updatePager();
       try {
         const params = new URLSearchParams({
@@ -919,7 +921,7 @@
       } catch (err) {
         state.orders = [];
         state.total = 0;
-        $('ordersBody').innerHTML = `<tr><td colspan="7" class="empty">${escapeHtml(err.message)}</td></tr>`;
+        $('ordersBody').innerHTML = `<tr><td colspan="8" class="empty">${escapeHtml(err.message)}</td></tr>`;
         showNotice(err.message, true);
       } finally {
         state.loading = false;
@@ -1072,7 +1074,7 @@
       if (action === 'view') {
         if (!ensureAuthenticated()) return;
         state.expandedOrderNo = '';
-        window.open(`/api/admin/order/${encodeURIComponent(orderNo)}${state.authToken ? `?token=${encodeURIComponent(state.authToken)}` : ''}`, '_blank');
+        window.open(`/admin/order/${encodeURIComponent(orderNo)}${state.authToken ? `?token=${encodeURIComponent(state.authToken)}` : ''}`, '_blank');
       }
     });
 
