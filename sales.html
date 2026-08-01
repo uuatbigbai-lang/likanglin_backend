@@ -141,6 +141,72 @@
       text-align: center;
       color: #667085;
     }
+    .link-button {
+      min-height: auto;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: #175cd3;
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .link-button:hover {
+      color: #1849a9;
+      text-decoration: underline;
+    }
+    .link-button:disabled {
+      color: #98a2b3;
+      text-decoration: none;
+      opacity: 1;
+      cursor: default;
+    }
+    .modal {
+      position: fixed;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      background: rgba(15, 23, 42, 0.42);
+      z-index: 50;
+    }
+    .modal.show {
+      display: flex;
+    }
+    .modal-card {
+      width: min(920px, 100%);
+      max-height: min(80vh, 760px);
+      overflow: hidden;
+      background: #fff;
+      border-radius: 14px;
+      box-shadow: 0 24px 80px rgba(15, 23, 42, 0.24);
+      display: flex;
+      flex-direction: column;
+    }
+    .modal-head,
+    .modal-foot {
+      padding: 16px 20px;
+      border-bottom: 1px solid #eef2f6;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+    .modal-foot {
+      border-bottom: 0;
+      border-top: 1px solid #eef2f6;
+      justify-content: flex-end;
+    }
+    .modal-body {
+      padding: 0 20px 20px;
+      overflow: auto;
+    }
+    .modal-title {
+      margin: 0;
+      font-size: 18px;
+      line-height: 26px;
+    }
     @media (max-width: 920px) {
       .topbar {
         flex-direction: column;
@@ -148,6 +214,18 @@
       .auth-actions,
       .card-head {
         flex-wrap: wrap;
+      }
+      .modal {
+        padding: 12px;
+      }
+      .modal-card {
+        max-height: 86vh;
+      }
+      .modal-head,
+      .modal-foot,
+      .modal-body {
+        padding-left: 14px;
+        padding-right: 14px;
       }
     }
   </style>
@@ -253,10 +331,44 @@
     </section>
   </main>
 
+  <div id="boundUsersModal" class="modal" aria-hidden="true">
+    <div class="modal-card panel" role="dialog" aria-modal="true" aria-labelledby="boundUsersTitle">
+      <div class="modal-head">
+        <div>
+          <h3 id="boundUsersTitle" class="modal-title">绑定用户信息</h3>
+          <div id="boundUsersMeta" class="small" style="margin-top:4px">-</div>
+        </div>
+        <button id="closeBoundUsersModal" class="subtle" type="button">关闭</button>
+      </div>
+      <div class="modal-body">
+        <div class="table-wrap" style="margin-top:16px">
+          <table>
+            <thead>
+              <tr>
+                <th style="width:180px">用户名</th>
+                <th style="width:180px">昵称</th>
+                <th style="width:280px">openid</th>
+                <th style="width:160px">手机号</th>
+                <th style="width:220px">绑定时间</th>
+              </tr>
+            </thead>
+            <tbody id="boundUsersBody">
+              <tr><td colspan="5" class="empty">请选择销售查看绑定用户</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="modal-foot">
+        <button id="boundUsersConfirmClose" class="subtle" type="button">关闭</button>
+      </div>
+    </div>
+  </div>
+
   <script>
     const state = {
       authToken: '',
       adminProfile: null,
+      activeSalesBoundUsers: null,
     };
     const AUTH_STORAGE_KEY = 'admin-auth-v1';
     const $ = (id) => document.getElementById(id);
@@ -338,6 +450,50 @@
       notice.className = `notice show${isError ? ' error' : ''}`;
     }
 
+    function openBoundUsersModal() {
+      const modal = $('boundUsersModal');
+      modal.classList.add('show');
+      modal.setAttribute('aria-hidden', 'false');
+    }
+
+    function closeBoundUsersModal() {
+      const modal = $('boundUsersModal');
+      modal.classList.remove('show');
+      modal.setAttribute('aria-hidden', 'true');
+    }
+
+    function renderBoundUsers(users = []) {
+      $('boundUsersBody').innerHTML = users.length ? users.map((item) => `
+        <tr>
+          <td>${escapeHtml(item.userName || '-')}</td>
+          <td>${escapeHtml(item.nickName || '-')}</td>
+          <td>${escapeHtml(item.openid || '-')}</td>
+          <td>${escapeHtml(item.phoneNumber || '-')}</td>
+          <td>${escapeHtml(formatDateTime(item.boundAt))}</td>
+        </tr>
+      `).join('') : '<tr><td colspan="5" class="empty">该销售下暂无绑定用户</td></tr>';
+    }
+
+    async function openBoundUsersPopup(salesOpenid, salesName, boundCount) {
+      state.activeSalesBoundUsers = {
+        salesOpenid: String(salesOpenid || '').trim(),
+        salesName: String(salesName || '').trim(),
+      };
+      $('boundUsersTitle').textContent = `${state.activeSalesBoundUsers.salesName || '该销售'}的绑定用户`;
+      $('boundUsersMeta').textContent = `销售openid：${state.activeSalesBoundUsers.salesOpenid || '-'}，当前绑定 ${Number(boundCount || 0)} 人`;
+      $('boundUsersBody').innerHTML = '<tr><td colspan="5" class="empty">正在加载绑定用户...</td></tr>';
+      openBoundUsersModal();
+      try {
+        const json = await requestJson(`/api/admin/sales/${encodeURIComponent(state.activeSalesBoundUsers.salesOpenid)}/bound-users`, {
+          headers: headers(),
+        });
+        renderBoundUsers(json.data || []);
+      } catch (err) {
+        $('boundUsersBody').innerHTML = `<tr><td colspan="5" class="empty">${escapeHtml(err.message)}</td></tr>`;
+        showNotice(err.message, true);
+      }
+    }
+
     async function requestJson(url, options = {}) {
       const response = await fetch(url, options);
       const json = await response.json().catch(() => ({}));
@@ -367,7 +523,17 @@
             <td>${escapeHtml(item.orderCount || 0)}</td>
             <td>${escapeHtml(item.soldQuantity || 0)}</td>
             <td>${escapeHtml(money(item.totalSalesAmount || 0))}</td>
-            <td>${escapeHtml(item.boundUserCount || 0)}</td>
+            <td>
+              <button
+                class="link-button"
+                type="button"
+                data-action="show-bound-users"
+                data-openid="${escapeHtml(item.openid || '')}"
+                data-sales-name="${escapeHtml(item.salesName || item.userNickName || '未命名销售')}"
+                data-count="${escapeHtml(item.boundUserCount || 0)}"
+                ${Number(item.boundUserCount || 0) > 0 ? '' : 'disabled'}
+              >${escapeHtml(item.boundUserCount || 0)}</button>
+            </td>
             <td>${escapeHtml(formatDateTime(item.createdAt))}</td>
             <td>
               <button class="subtle" type="button" data-action="delete-sales" data-openid="${escapeHtml(item.openid || '')}">删除</button>
@@ -445,6 +611,16 @@
     }
 
     $('salesBody').addEventListener('click', async (event) => {
+      const showTarget = event.target.closest('[data-action="show-bound-users"]');
+      if (showTarget && !showTarget.disabled) {
+        await openBoundUsersPopup(
+          showTarget.dataset.openid,
+          showTarget.dataset.salesName,
+          showTarget.dataset.count,
+        );
+        return;
+      }
+
       const target = event.target.closest('[data-action="delete-sales"]');
       if (!target) return;
       try {
@@ -469,6 +645,18 @@
         return;
       }
       window.location.href = '/admin/dashboard?page=orders';
+    });
+    $('closeBoundUsersModal').addEventListener('click', closeBoundUsersModal);
+    $('boundUsersConfirmClose').addEventListener('click', closeBoundUsersModal);
+    $('boundUsersModal').addEventListener('click', (event) => {
+      if (event.target === $('boundUsersModal')) {
+        closeBoundUsersModal();
+      }
+    });
+    window.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && $('boundUsersModal').classList.contains('show')) {
+        closeBoundUsersModal();
+      }
     });
     $('adminLogout').addEventListener('click', () => {
       clearAuth();

@@ -619,6 +619,63 @@ const buildCurrentBindingsFromSources = async () => {
   };
 };
 
+const buildBoundUsersForSales = async (salesOpenid) => {
+  const normalizedSalesOpenid = String(salesOpenid || '').trim();
+  if (!normalizedSalesOpenid) return [];
+
+  const { currentBindingMap } = await buildCurrentBindingsFromSources();
+  const bindings = Array.from(currentBindingMap.values())
+    .filter((item) => item.salesOpenid === normalizedSalesOpenid)
+    .sort((left, right) => new Date(right.boundAt || 0).getTime() - new Date(left.boundAt || 0).getTime());
+
+  if (!bindings.length) return [];
+
+  const userOpenids = Array.from(new Set(bindings.map((item) => String(item.userOpenid || '').trim()).filter(Boolean)));
+  const [users, orders] = await Promise.all([
+    User.findAll({
+      attributes: ['openid', 'nickName', 'phoneNumber', 'createdAt', 'updatedAt'],
+      where: { openid: { [Op.in]: userOpenids } },
+    }),
+    Order.findAll({
+      attributes: ['openid', 'userName', 'createdAt', 'updatedAt'],
+      where: {
+        openid: { [Op.in]: userOpenids },
+        userName: { [Op.ne]: null },
+      },
+      order: [['createdAt', 'DESC'], ['updatedAt', 'DESC']],
+    }),
+  ]);
+
+  const userMap = new Map(
+    users.map((user) => {
+      const data = typeof user?.toJSON === 'function' ? user.toJSON() : user;
+      return [String(data?.openid || '').trim(), data];
+    }),
+  );
+  const latestUserNameMap = new Map();
+  orders.forEach((order) => {
+    const data = typeof order?.toJSON === 'function' ? order.toJSON() : order;
+    const userOpenid = String(data?.openid || '').trim();
+    const userName = String(data?.userName || '').trim();
+    if (!userOpenid || !userName || latestUserNameMap.has(userOpenid)) return;
+    latestUserNameMap.set(userOpenid, userName);
+  });
+
+  return bindings.map((binding) => {
+    const userOpenid = String(binding.userOpenid || '').trim();
+    const user = userMap.get(userOpenid) || {};
+    return {
+      openid: userOpenid,
+      nickName: String(user.nickName || '').trim(),
+      userName: latestUserNameMap.get(userOpenid) || '',
+      phoneNumber: String(user.phoneNumber || '').trim(),
+      boundAt: binding.boundAt || null,
+      createdAt: user.createdAt || null,
+      updatedAt: user.updatedAt || null,
+    };
+  });
+};
+
 const formatUserSalesBinding = (binding) => {
   if (!binding) return null;
   const data = typeof binding.toJSON === 'function' ? binding.toJSON() : binding;
@@ -2285,6 +2342,23 @@ app.get('/api/admin/sales', adminAuth, async (req, res) => {
       code: 0,
       data: salesProfiles.map((profile) => formatSalesProfile(profile, statsMap.get(profile.openid))),
     });
+  } catch (err) {
+    res.send({ code: -1, message: err.message });
+  }
+});
+
+app.get('/api/admin/sales/:openid/bound-users', adminAuth, async (req, res) => {
+  try {
+    const openid = String(req.params.openid || '').trim();
+    if (!openid) {
+      return res.send({ code: -1, message: '缺少销售 openid' });
+    }
+    const salesProfile = await SalesProfile.findOne({ where: { openid } });
+    if (!salesProfile) {
+      return res.send({ code: -1, message: '销售不存在' });
+    }
+    const users = await buildBoundUsersForSales(openid);
+    res.send({ code: 0, data: users });
   } catch (err) {
     res.send({ code: -1, message: err.message });
   }
