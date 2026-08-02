@@ -812,6 +812,17 @@ const getBoundSalesForUser = async (userOpenid) => {
   };
 };
 
+const getRequestOpenid = (req) => String(req.headers['x-wx-openid'] || '').trim() || 'local_dev_user';
+
+const isOwnedByRequester = (recordOpenid, requesterOpenid) => {
+  const ownerOpenid = String(recordOpenid || '').trim();
+  const currentOpenid = String(requesterOpenid || '').trim() || 'local_dev_user';
+
+  if (!ownerOpenid) return currentOpenid === 'local_dev_user';
+  if (currentOpenid === 'local_dev_user') return ownerOpenid === 'local_dev_user';
+  return ownerOpenid === currentOpenid;
+};
+
 const bindSalesForUser = async ({
   userOpenid,
   salesOpenid,
@@ -932,12 +943,19 @@ const normalizeSpecs = (goods) => {
 
 const isWechatPayTransactionId = (value) => /^420\d{25,}$/.test(String(value || '').trim());
 
-const markOrderPaidWithoutDelivery = async (order, transactionId, paidAt) => {
+const isOnlyPaymentOrder = (order) => {
+  const data = typeof order?.toJSON === 'function' ? order.toJSON() : (order || {});
+  if (typeof data.isOnlyPayment === 'boolean') return data.isOnlyPayment;
+  return !data.userAddress;
+};
+
+const markOrderPaid = async (order, transactionId, paidAt) => {
   const nextTrajectory = mergeTrajectory(order.trajectoryVos || [], 200002);
+  const onlyPayment = isOnlyPaymentOrder(order);
 
   await order.update({
-    orderStatus: 50,
-    orderStatusName: '交易完成',
+    orderStatus: onlyPayment ? 50 : 10,
+    orderStatusName: onlyPayment ? '交易完成' : '待发货',
     transactionId: transactionId || order.transactionId || 'CLIENT_CONFIRMED',
     paidAt: paidAt || order.paidAt || new Date(),
     trajectoryVos: nextTrajectory,
@@ -1102,6 +1120,7 @@ const formatOrderForMiniProgram = (order, afterSales = []) => {
     salesOpenid: data.salesOpenid || '',
     salesNameSnapshot: data.salesNameSnapshot || '',
     salesName: data.salesNameSnapshot || '',
+    isOnlyPayment: isOnlyPaymentOrder(data),
     autoCancelTime: createTime + ORDER_AUTO_CANCEL_MS,
     orderStatusName: displayStatusName,
     orderStatusRemark:
@@ -1285,8 +1304,8 @@ const LOGISTICS_ACTION_CONFIG = {
     code: '200002',
     title: '支付成功',
     status: '订单已完成支付',
-    orderStatus: 50,
-    orderStatusName: '交易完成',
+    orderStatus: 10,
+    orderStatusName: '待发货',
   },
   100001: {
     code: '100001',
@@ -3577,8 +3596,9 @@ app.put('/api/samples/:id', async (req, res) => {
 
 app.get('/api/after-sale/preview', async (req, res) => {
   try {
+    const openid = getRequestOpenid(req);
     const { orderNo, skuId, numOfSku = 1 } = req.query;
-    const order = await Order.findOne({ where: { orderNo } });
+    const order = await Order.findOne({ where: { orderNo, openid } });
     if (!order) return res.send({ code: -1, message: '订单不存在' });
 
     const goodsList = Array.isArray(order.goodsList) ? order.goodsList : [];
@@ -3623,8 +3643,9 @@ app.get('/api/after-sale/reasons', (req, res) => {
 
 app.post('/api/after-sale/apply', async (req, res) => {
   try {
+    const openid = getRequestOpenid(req);
     const { rights = {}, rightsItem = [], refundMemo = '' } = req.body || {};
-    const order = await Order.findOne({ where: { orderNo: rights.orderNo } });
+    const order = await Order.findOne({ where: { orderNo: rights.orderNo, openid } });
     if (!order) return res.send({ code: -1, message: '订单不存在' });
 
     const goodsList = Array.isArray(order.goodsList) ? order.goodsList : [];
@@ -3686,10 +3707,11 @@ app.post('/api/after-sale/apply', async (req, res) => {
 
 app.get('/api/after-sale/list', async (req, res) => {
   try {
+    const openid = getRequestOpenid(req);
     const pageNum = Math.max(Number(req.query.pageNum) || 1, 1);
     const pageSize = Math.max(Number(req.query.pageSize) || 10, 1);
     const afterServiceStatus = req.query.afterServiceStatus;
-    const where = {};
+    const where = { openid };
     if (afterServiceStatus !== undefined && afterServiceStatus !== '' && Number(afterServiceStatus) !== -1) {
       where.rightsStatus = Number(afterServiceStatus);
     }
@@ -3699,7 +3721,7 @@ app.get('/api/after-sale/list', async (req, res) => {
       offset: (pageNum - 1) * pageSize,
       limit: pageSize,
     });
-    const allRows = await AfterSale.findAll();
+    const allRows = await AfterSale.findAll({ where: { openid } });
     const countByStatus = (status) => allRows.filter((item) => Number(item.rightsStatus) === status).length;
     res.send({
       code: 0,
@@ -3723,7 +3745,8 @@ app.get('/api/after-sale/list', async (req, res) => {
 
 app.get('/api/after-sale/detail/:rightsNo', async (req, res) => {
   try {
-    const afterSale = await AfterSale.findOne({ where: { rightsNo: req.params.rightsNo } });
+    const openid = getRequestOpenid(req);
+    const afterSale = await AfterSale.findOne({ where: { rightsNo: req.params.rightsNo, openid } });
     if (!afterSale) return res.send({ code: -1, message: '售后单不存在' });
     res.send({ code: 0, data: [formatAfterSaleForMiniProgram(afterSale)] });
   } catch (err) {
@@ -3733,8 +3756,9 @@ app.get('/api/after-sale/detail/:rightsNo', async (req, res) => {
 
 app.post('/api/after-sale/logistics', async (req, res) => {
   try {
+    const openid = getRequestOpenid(req);
     const { rightsNo, logisticsCompanyCode, logisticsCompanyName, logisticsNo, remark } = req.body || {};
-    const afterSale = await AfterSale.findOne({ where: { rightsNo } });
+    const afterSale = await AfterSale.findOne({ where: { rightsNo, openid } });
     if (!afterSale) return res.send({ code: -1, message: '售后单不存在' });
     await afterSale.update({
       userRightsStatus: SERVICE_STATUS.PENDING_DELIVERY,
@@ -3748,8 +3772,9 @@ app.post('/api/after-sale/logistics', async (req, res) => {
 
 app.post('/api/after-sale/cancel', async (req, res) => {
   try {
+    const openid = getRequestOpenid(req);
     const { rightsNo } = req.body || {};
-    const afterSale = await AfterSale.findOne({ where: { rightsNo } });
+    const afterSale = await AfterSale.findOne({ where: { rightsNo, openid } });
     if (!afterSale) return res.send({ code: -1, message: '售后单不存在' });
     await afterSale.update({
       rightsStatus: AFTER_SERVICE_STATUS.CLOSED,
@@ -3767,10 +3792,11 @@ app.post('/api/after-sale/cancel', async (req, res) => {
 app.get('/api/order/list', async (req, res) => {
   try {
     await clearExpiredPendingOrders();
+    const openid = getRequestOpenid(req);
     const pageNum = Math.max(Number(req.query.pageNum) || 1, 1);
     const pageSize = Math.max(Number(req.query.pageSize) || 10, 1);
     const orderStatus = req.query.orderStatus;
-    const where = {};
+    const where = { openid };
 
     if (orderStatus !== undefined && orderStatus !== '') {
       where.orderStatus = Number(orderStatus);
@@ -3788,7 +3814,10 @@ app.get('/api/order/list', async (req, res) => {
     const tabCounts = await Promise.all(
       statuses.map(async (status) => ({
         tabType: status,
-        orderNum: status === -1 ? await Order.count() : await Order.count({ where: { orderStatus: status } }),
+        orderNum:
+          status === -1
+            ? await Order.count({ where: { openid } })
+            : await Order.count({ where: { openid, orderStatus: status } }),
       })),
     );
 
@@ -3809,6 +3838,7 @@ app.get('/api/order/list', async (req, res) => {
 // 订单详情，兼容前端传数据库 id 或订单号
 app.get('/api/order/detail/:id', async (req, res) => {
   try {
+    const openid = getRequestOpenid(req);
     const id = req.params.id;
     await clearExpiredPendingOrders({ orderNo: id, orderId: id });
     const where = {
@@ -3821,6 +3851,9 @@ app.get('/api/order/detail/:id', async (req, res) => {
 
     const order = await Order.findOne({ where });
     if (!order) {
+      return res.send({ code: -1, message: '订单不存在' });
+    }
+    if (!isOwnedByRequester(order.openid, openid)) {
       return res.send({ code: -1, message: '订单不存在' });
     }
 
@@ -4001,6 +4034,7 @@ app.post('/api/order/wechat/notify', async (req, res) => {
 
 app.post('/api/order/wechat/sync', async (req, res) => {
   try {
+    const openid = getRequestOpenid(req);
     const { orderNo, orderId } = req.body || {};
     const conditions = [];
     if (orderNo) conditions.push({ orderNo });
@@ -4009,6 +4043,9 @@ app.post('/api/order/wechat/sync', async (req, res) => {
 
     const order = await Order.findOne({ where: { [Op.or]: conditions } });
     if (!order) return res.send({ code: -1, message: '订单不存在' });
+    if (!isOwnedByRequester(order.openid, openid)) {
+      return res.send({ code: -1, message: '订单不存在' });
+    }
 
     const syncResult = await syncOrderFromWechatOrderState(order, '手动同步');
     const afterSales = await fetchAfterSalesForOrder(order.orderNo);
@@ -4027,6 +4064,7 @@ app.post('/api/order/wechat/sync', async (req, res) => {
 
 app.post('/api/order/confirm-received', async (req, res) => {
   try {
+    const openid = getRequestOpenid(req);
     const { orderNo, orderId } = req.body || {};
     const conditions = [];
     if (orderNo) conditions.push({ orderNo });
@@ -4035,6 +4073,9 @@ app.post('/api/order/confirm-received', async (req, res) => {
 
     const order = await Order.findOne({ where: { [Op.or]: conditions } });
     if (!order) return res.send({ code: -1, message: '订单不存在' });
+    if (!isOwnedByRequester(order.openid, openid)) {
+      return res.send({ code: -1, message: '订单不存在' });
+    }
     if (Number(order.orderStatus) !== 40) {
       return res.send({ code: -1, message: '当前订单状态不可确认收货' });
     }
@@ -4346,6 +4387,7 @@ app.post('/api/order/create', async (req, res) => {
       goodsList = [],
       userAddress,
       userName,
+      isOnlyPayment = false,
       totalAmount,
       remark,
       authorizationCode,
@@ -4400,6 +4442,7 @@ app.post('/api/order/create', async (req, res) => {
       goodsList: pricedGoodsList, // 完整商品快照（含名称、图片、规格、单价、数量）
       userAddress: userAddress || null,
       userName: userName || '',
+      isOnlyPayment: Boolean(isOnlyPayment),
       remark: remark || '',
       waybillToken: waybillToken || null,
       logisticsNo: logisticsNo || null,
@@ -4495,14 +4538,8 @@ app.post('/api/order/pay', async (req, res) => {
 
     const codeOpenid = await getOpenidByCode(authorizationCode);
     const openid = headerOpenid || codeOpenid || order.openid || 'local_dev_user';
-
-    if (openid && openid !== 'local_dev_user' && openid !== order.openid) {
-      const boundSales = await getBoundSalesForUser(openid);
-      await order.update({
-        openid,
-        salesOpenid: boundSales?.salesOpenid || order.salesOpenid,
-        salesNameSnapshot: boundSales?.salesName || order.salesNameSnapshot,
-      });
+    if (!isOwnedByRequester(order.openid, openid)) {
+      return res.send({ code: -1, message: '订单不存在或已超时删除' });
     }
     if ((!order.salesOpenid || !order.salesNameSnapshot) && openid && openid !== 'local_dev_user') {
       const boundSales = await getBoundSalesForUser(openid);
@@ -4568,6 +4605,7 @@ app.post('/api/order/pay', async (req, res) => {
 // 微信支付通知仍是最终可信来源；这个接口用于本地模拟支付和避免通知异步导致详情页短暂显示待付款。
 app.post('/api/order/paid', async (req, res) => {
   try {
+    const openid = getRequestOpenid(req);
     const { orderId, orderNo, transactionId } = req.body || {};
     const conditions = [];
 
@@ -4585,9 +4623,12 @@ app.post('/api/order/paid', async (req, res) => {
     if (!order) {
       return res.send({ code: -1, message: '订单不存在' });
     }
+    if (!isOwnedByRequester(order.openid, openid)) {
+      return res.send({ code: -1, message: '订单不存在' });
+    }
 
     if (Number(order.orderStatus) === 5) {
-      await markOrderPaidWithoutDelivery(order, transactionId);
+      await markOrderPaid(order, transactionId);
       await redeemCouponForOrder(order);
     }
 
@@ -4613,7 +4654,7 @@ app.post('/api/pay/wechat/notify', async (req, res) => {
     const payResult = decryptNotifyResource(notifyBody.resource);
     const order = await Order.findOne({ where: { orderNo: payResult.out_trade_no } });
     if (order && payResult.trade_state === 'SUCCESS') {
-      await markOrderPaidWithoutDelivery(
+      await markOrderPaid(
         order,
         payResult.transaction_id,
         payResult.success_time ? new Date(payResult.success_time) : new Date(),

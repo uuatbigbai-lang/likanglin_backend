@@ -377,6 +377,12 @@ const Order = sequelize.define("Order", {
     type: DataTypes.STRING(50),
     allowNull: true,
   },
+  isOnlyPayment: {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,
+    defaultValue: false,
+    comment: "是否为仅付款订单",
+  },
   remark: {
     type: DataTypes.STRING(200),
     defaultValue: "",
