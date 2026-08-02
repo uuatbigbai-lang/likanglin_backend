@@ -4387,7 +4387,6 @@ app.post('/api/order/create', async (req, res) => {
       goodsList = [],
       userAddress,
       userName,
-      isOnlyPayment = false,
       totalAmount,
       remark,
       authorizationCode,
@@ -4442,7 +4441,6 @@ app.post('/api/order/create', async (req, res) => {
       goodsList: pricedGoodsList, // 完整商品快照（含名称、图片、规格、单价、数量）
       userAddress: userAddress || null,
       userName: userName || '',
-      isOnlyPayment: Boolean(isOnlyPayment),
       remark: remark || '',
       waybillToken: waybillToken || null,
       logisticsNo: logisticsNo || null,

@@ -1087,6 +1087,12 @@ async function ensureOnlineSchema() {
     defaultValue: "",
     comment: "下单时销售名称快照",
   });
+  await ensureColumn("Orders", "isOnlyPayment", {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,
+    defaultValue: false,
+    comment: "是否为仅付款订单",
+  });
 }
 
 // 数据库初始化方法
