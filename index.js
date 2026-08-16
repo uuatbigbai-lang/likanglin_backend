@@ -234,12 +234,14 @@ const formatCouponRecord = (coupon) => {
     claimed: 'default',
     used: 'useless',
     expired: 'disabled',
+    forwarded: 'disabled',
   };
   const statusTextMap = {
     generated: '待认领',
     claimed: '待使用',
     used: '已核销',
     expired: '已作废',
+    forwarded: '已转发',
   };
   const buyXGetYDesc = `订单内商品每满${template.minQuantity || 3}件，自动减${template.value || 1}件`;
   return {
@@ -2530,26 +2532,45 @@ app.post('/api/coupon/share', async (req, res) => {
       return res.send({ code: -1, message: '当前用户不是员工身份，领取后不能继续转发' });
     }
 
-    const childCouponNo = buildCouponNo();
-    const childCoupon = await CouponRecord.create({
-      couponNo: childCouponNo,
-      templateType: coupon.templateType,
-      title: coupon.title,
-      status: 'generated',
-      createdByOpenid: coupon.createdByOpenid,
-      rootCouponNo: getCouponRootNo(coupon),
-      parentCouponNo: coupon.couponNo,
-      forwardedByOpenid: openid,
-      forwardedAt: new Date(),
-      meta: coupon.meta || {},
-    });
-    const share = await CouponShareRecord.create({
-      shareId: buildCouponShareId(),
-      couponNo: childCoupon.couponNo,
-      rootCouponNo: getCouponRootNo(coupon),
-      parentCouponNo: coupon.couponNo,
-      sharerOpenid: openid,
-      sharerRole: 'employee',
+    // 员工继续转发属于权益交接：原券立即失效，避免同一权益被持有人和接收人同时使用。
+    const { childCoupon, share } = await CouponRecord.sequelize.transaction(async (transaction) => {
+      const childCouponNo = buildCouponNo();
+      const childCoupon = await CouponRecord.create({
+        couponNo: childCouponNo,
+        templateType: coupon.templateType,
+        title: coupon.title,
+        status: 'generated',
+        createdByOpenid: coupon.createdByOpenid,
+        rootCouponNo: getCouponRootNo(coupon),
+        parentCouponNo: coupon.couponNo,
+        forwardedByOpenid: openid,
+        forwardedAt: new Date(),
+        meta: coupon.meta || {},
+      }, { transaction });
+      const [updatedCount] = await CouponRecord.update({
+        status: 'forwarded',
+        forwardedByOpenid: openid,
+        forwardedAt: new Date(),
+        meta: {
+          ...(coupon.meta || {}),
+          forwardedToCouponNo: childCouponNo,
+        },
+      }, {
+        where: { couponNo, status: 'claimed', claimedByOpenid: openid },
+        transaction,
+      });
+      if (!updatedCount) {
+        throw new Error('优惠券状态已变更，请刷新后重试');
+      }
+      const share = await CouponShareRecord.create({
+        shareId: buildCouponShareId(),
+        couponNo: childCoupon.couponNo,
+        rootCouponNo: getCouponRootNo(coupon),
+        parentCouponNo: coupon.couponNo,
+        sharerOpenid: openid,
+        sharerRole: 'employee',
+      }, { transaction });
+      return { childCoupon, share };
     });
     res.send({
       code: 0,
@@ -2584,6 +2605,7 @@ app.post('/api/coupon/claim', async (req, res) => {
       if (pendingShare) return res.send({ code: -1, message: '请通过有效的优惠券分享链接领取' });
     }
     if (coupon.status === 'used') return res.send({ code: -1, message: '优惠券已核销' });
+    if (coupon.status === 'forwarded') return res.send({ code: -1, message: '优惠券已转发给下一位用户' });
     if (coupon.status === 'claimed' && coupon.claimedByOpenid && coupon.claimedByOpenid !== openid) {
       return res.send({ code: -1, message: '优惠券已被领取' });
     }

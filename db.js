@@ -778,7 +778,7 @@ const CouponRecord = sequelize.define("CouponRecord", {
     type: DataTypes.STRING(20),
     allowNull: false,
     defaultValue: "generated",
-    comment: "generated待领取/claimed已领取/used已核销/expired已失效",
+    comment: "generated待领取/claimed已领取/forwarded已转发/used已核销/expired已失效",
   },
   createdByOpenid: {
     type: DataTypes.STRING(128),
