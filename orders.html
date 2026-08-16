@@ -268,7 +268,8 @@
       max-width: 260px;
       word-break: break-all;
     }
-    .actions-column {
+    th.actions-column,
+    td.actions-column {
       position: sticky;
       right: 0;
       z-index: 2;
@@ -878,7 +879,7 @@
             <td class="sales-name">${escapeHtml(order.customerSalesName || '-')}</td>
             <td class="sales-openid">${escapeHtml(order.customerSalesOpenid || '-')}</td>
             <td class="goods">${goodsSummary(order)}</td>
-            <td class="actions-column">
+            <td>
               <strong>${money(order.paymentAmount || order.totalAmount)}</strong>
               <div class="small">商品：${money(order.goodsAmount || order.totalAmount)}</div>
             </td>
@@ -895,7 +896,7 @@
               <div>${escapeHtml(logistics.logisticsCompanyName || '-')}</div>
               <div class="small">${escapeHtml(logistics.logisticsNo || '')}</div>
             </td>
-            <td>
+            <td class="actions-column">
               <div class="row-actions">
                 ${isPendingPay ? `<button type="button" data-action="edit-payment" data-order-no="${escapeHtml(order.orderNo)}" data-payment-amount="${escapeHtml(order.paymentAmount || order.totalAmount || '0')}">改金额</button>` : ''}
                 ${isPendingDelivery ? `<button type="button" data-action="toggle-ship" data-order-no="${escapeHtml(order.orderNo)}">${isExpanded ? '收起发货' : '同步发货'}</button>` : ''}

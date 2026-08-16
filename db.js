@@ -359,6 +359,17 @@ const Order = sequelize.define("Order", {
     type: DataTypes.STRING(20),
     defaultValue: "待付款",
   },
+  returnPreviousOrderStatus: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+    comment: "进入退货中前的订单状态，用于取消退货时恢复",
+  },
+  returnPreviousOrderStatusName: {
+    type: DataTypes.STRING(20),
+    allowNull: false,
+    defaultValue: "",
+    comment: "进入退货中前的订单状态名称，用于取消退货时恢复",
+  },
   totalAmount: {
     type: DataTypes.STRING(20),
     comment: "订单总金额（分）",
@@ -1119,6 +1130,17 @@ async function ensureOnlineSchema() {
     type: DataTypes.STRING(256),
     allowNull: true,
     comment: "微信物流查询插件 waybill_token",
+  });
+  await ensureColumn("Orders", "returnPreviousOrderStatus", {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+    comment: "进入退货中前的订单状态，用于取消退货时恢复",
+  });
+  await ensureColumn("Orders", "returnPreviousOrderStatusName", {
+    type: DataTypes.STRING(20),
+    allowNull: false,
+    defaultValue: "",
+    comment: "进入退货中前的订单状态名称，用于取消退货时恢复",
   });
   await ensureColumn("Orders", "logisticsNo", {
     type: DataTypes.STRING(128),

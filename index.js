@@ -1887,11 +1887,41 @@ const formatAfterSaleForMiniProgram = (afterSale) => {
   };
 };
 
-const resolveReturnCanceledOrderStatus = (order) => (
-  order.logisticsNo || order.waybillToken
-    ? { orderStatus: 40, orderStatusName: '待收货' }
-    : { orderStatus: 10, orderStatusName: '待发货' }
-);
+const ORDER_STATUS_NAMES = {
+  5: '待付款',
+  10: '待发货',
+  40: '待收货',
+  50: '交易完成',
+  [ORDER_STATUS_RETURNING]: '退货中',
+  [ORDER_STATUS_REFUNDED]: '已退款',
+};
+
+const getReturnStatusSnapshot = (order) => ({
+  returnPreviousOrderStatus: Number(order.orderStatus),
+  returnPreviousOrderStatusName: order.orderStatusName || ORDER_STATUS_NAMES[Number(order.orderStatus)] || '',
+});
+
+const resolveReturnCanceledOrderStatus = (order) => {
+  const previousStatus = order.returnPreviousOrderStatus;
+  const hasValidPreviousStatus = previousStatus !== null
+    && previousStatus !== undefined
+    && previousStatus !== ''
+    && ![ORDER_STATUS_RETURNING, ORDER_STATUS_REFUNDED].includes(Number(previousStatus));
+
+  if (hasValidPreviousStatus) {
+    return {
+      orderStatus: Number(previousStatus),
+      orderStatusName: order.returnPreviousOrderStatusName || ORDER_STATUS_NAMES[Number(previousStatus)] || '',
+      returnPreviousOrderStatus: null,
+      returnPreviousOrderStatusName: '',
+    };
+  }
+
+  // 兼容上线前已处于退货中的历史订单：当时没有保存原状态，只能按物流信息推断。
+  return order.logisticsNo || order.waybillToken
+    ? { orderStatus: 40, orderStatusName: '待收货', returnPreviousOrderStatus: null, returnPreviousOrderStatusName: '' }
+    : { orderStatus: 10, orderStatusName: '待发货', returnPreviousOrderStatus: null, returnPreviousOrderStatusName: '' };
+};
 
 const cancelAfterSaleApplication = async (afterSale, { restoreOrderStatus = true } = {}) => {
   if (Number(afterSale.userRightsStatus) === SERVICE_STATUS.REFUNDED) {
@@ -2384,7 +2414,10 @@ app.get('/api/coupon/admin/list', async (req, res) => {
       return res.send({ code: -1, message: '当前账号不是优惠券管理员' });
     }
 
-    const coupons = await CouponRecord.findAll({ order: [['createdAt', 'DESC']] });
+    const coupons = await CouponRecord.findAll({
+      where: { createdByOpenid: openid },
+      order: [['createdAt', 'DESC']],
+    });
     res.send({ code: 0, data: coupons.map(formatCouponRecord) });
   } catch (err) {
     res.send({ code: -1, message: err.message });
@@ -2401,8 +2434,8 @@ app.post('/api/coupon/admin/void', async (req, res) => {
     const couponNo = String(req.body?.couponNo || '').trim();
     if (!couponNo) return res.send({ code: -1, message: '缺少优惠券编号' });
 
-    const coupon = await CouponRecord.findOne({ where: { couponNo } });
-    if (!coupon) return res.send({ code: -1, message: '优惠券不存在' });
+    const coupon = await CouponRecord.findOne({ where: { couponNo, createdByOpenid: openid } });
+    if (!coupon) return res.send({ code: -1, message: '优惠券不存在，或无权操作其他管理员生成的优惠券' });
     if (!['generated', 'claimed'].includes(coupon.status)) {
       return res.send({ code: -1, message: '仅待认领、待使用的优惠券可以作废' });
     }
@@ -2462,6 +2495,9 @@ app.post('/api/coupon/share', async (req, res) => {
     if (!coupon) return res.send({ code: -1, message: '优惠券不存在' });
 
     if (coupon.status === 'generated') {
+      if (coupon.createdByOpenid !== openid) {
+        return res.send({ code: -1, message: '无权操作其他优惠券管理员生成的优惠券' });
+      }
       if (coupon.parentCouponNo) {
         return res.send({ code: -1, message: '请等待接收人领取后再继续转发' });
       }
@@ -4694,6 +4730,7 @@ app.post('/api/admin/order/return', adminAuth, async (req, res) => {
 
     if (currentStatus !== ORDER_STATUS_RETURNING) {
       await order.update({
+        ...getReturnStatusSnapshot(order),
         orderStatus: ORDER_STATUS_RETURNING,
         orderStatusName: '退货中',
         remark: reason ? `${order.remark || ''}${order.remark ? '\n' : ''}退货备注：${String(reason).slice(0, 200)}` : order.remark,
