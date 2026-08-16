@@ -1185,7 +1185,9 @@ const formatOrderForMiniProgram = (order, afterSales = []) => {
     waybill_token: data.waybillToken || '',
     sampleStatus: data.sampleStatus || '',
     sampleStatusName: sampleStatusNameMap[data.sampleStatus] || data.sampleStatus || '',
-    buttonVOs: hasActiveAfterSale ? [{ primary: false, type: 5, name: '查看售后' }] : getOrderButtons(data.orderStatus),
+    buttonVOs: Number(data.orderStatus) === ORDER_STATUS_RETURNING
+      ? [{ primary: false, type: 10, name: '取消退货' }]
+      : hasActiveAfterSale ? [{ primary: false, type: 5, name: '查看售后' }] : getOrderButtons(data.orderStatus),
     labelVOs: null,
     invoiceVO: null,
     couponAmount: String(data.couponAmount || '0'),
@@ -4168,6 +4170,38 @@ app.post('/api/after-sale/cancel', async (req, res) => {
     await cancelAfterSaleApplication(afterSale);
     res.send({ code: 0, data: formatAfterSaleForMiniProgram(afterSale) });
   } catch (err) {
+    res.send({ code: -1, message: err.message });
+  }
+});
+
+// 客户从订单详情取消退货。管理员手动设置的“退货中”订单可能没有售后单，故按订单处理。
+app.post('/api/order/cancel-return', async (req, res) => {
+  try {
+    const openid = getRequestOpenid(req);
+    const orderNo = String(req.body?.orderNo || '').trim();
+    if (!orderNo) return res.send({ code: -1, message: '缺少订单号' });
+
+    const order = await Order.findOne({ where: { orderNo, openid } });
+    if (!order) return res.send({ code: -1, message: '订单不存在或无权操作' });
+    if (Number(order.orderStatus) !== ORDER_STATUS_RETURNING) {
+      return res.send({ code: -1, message: '只有退货中订单可以取消退货' });
+    }
+
+    const afterSales = await AfterSale.findAll({
+      where: {
+        orderNo,
+        rightsStatus: { [Op.ne]: AFTER_SERVICE_STATUS.CLOSED },
+        userRightsStatus: { [Op.ne]: SERVICE_STATUS.REFUNDED },
+      },
+    });
+    await Promise.all(afterSales.map((afterSale) => cancelAfterSaleApplication(afterSale, { restoreOrderStatus: false })));
+    await order.update(resolveReturnCanceledOrderStatus(order));
+    res.send({
+      code: 0,
+      data: formatOrderForMiniProgram(order, await fetchAfterSalesForOrder(order.orderNo)),
+    });
+  } catch (err) {
+    console.error('客户取消退货失败:', err);
     res.send({ code: -1, message: err.message });
   }
 });
