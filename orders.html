@@ -106,6 +106,10 @@
       background: #edf4ff;
       color: #1f5f9f;
     }
+    button.danger {
+      background: #d92d20;
+      color: #fff;
+    }
     button.subtle {
       background: #f2f4f7;
       color: #344054;
@@ -219,11 +223,13 @@
       grid-column: 1 / -1;
     }
     .table-wrap {
+      position: relative;
       overflow-x: auto;
+      overscroll-behavior-x: contain;
     }
     table {
       width: 100%;
-      min-width: 1040px;
+      min-width: 1760px;
       border-collapse: collapse;
     }
     th,
@@ -243,6 +249,38 @@
       font-weight: 800;
     }
     tr:hover td {
+      background: #fbfdff;
+    }
+    .customer-identity {
+      min-width: 190px;
+      max-width: 260px;
+      word-break: break-all;
+    }
+    .customer-phone {
+      min-width: 130px;
+      white-space: nowrap;
+    }
+    .sales-name {
+      min-width: 140px;
+    }
+    .sales-openid {
+      min-width: 190px;
+      max-width: 260px;
+      word-break: break-all;
+    }
+    .actions-column {
+      position: sticky;
+      right: 0;
+      z-index: 2;
+      min-width: 230px;
+      background: #fff;
+      box-shadow: -8px 0 14px rgba(16, 24, 40, 0.08);
+    }
+    th.actions-column {
+      z-index: 3;
+      background: #f8fafc;
+    }
+    tr:hover td.actions-column {
       background: #fbfdff;
     }
     .order-no {
@@ -482,17 +520,21 @@
           <thead>
             <tr>
               <th style="width:210px">订单</th>
+              <th style="width:220px">下单客户 OpenID</th>
+              <th style="width:140px">客户手机号</th>
+              <th style="width:150px">对接销售名称</th>
+              <th style="width:220px">对接销售 OpenID</th>
               <th>商品</th>
               <th style="width:120px">金额</th>
               <th style="width:130px">状态</th>
               <th style="width:170px">下单时间</th>
               <th style="width:210px">收件信息</th>
               <th style="width:170px">物流</th>
-              <th style="width:190px">操作</th>
+              <th class="actions-column" style="width:230px">操作</th>
             </tr>
           </thead>
           <tbody id="ordersBody">
-            <tr><td colspan="8" class="empty">正在加载订单...</td></tr>
+            <tr><td colspan="12" class="empty">正在加载订单...</td></tr>
           </tbody>
         </table>
       </div>
@@ -528,6 +570,28 @@
     </div>
   </div>
 
+  <div id="deleteOrderModal" class="modal" aria-hidden="true">
+    <div class="modal-backdrop" data-action="close-delete-order-modal"></div>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="deleteOrderModalTitle">
+      <h3 id="deleteOrderModalTitle">删除历史订单</h3>
+      <p class="modal-desc">此操作会永久删除订单记录，且不可恢复。请在下方输入“确认删除”后继续。</p>
+      <div class="modal-grid">
+        <div class="modal-summary">
+          <strong id="deleteOrderModalOrderNo">-</strong>
+          <div class="small">仅已完成、已退款且没有进行中售后的订单可删除。</div>
+        </div>
+        <div>
+          <label for="deleteOrderModalInput">确认文字</label>
+          <input id="deleteOrderModalInput" autocomplete="off" placeholder="请输入确认删除">
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button id="deleteOrderModalCancel" class="subtle" type="button">取消</button>
+        <button id="deleteOrderModalSubmit" class="danger" type="button" disabled>永久删除</button>
+      </div>
+    </div>
+  </div>
+
   <script src="/admin-order-export.js"></script>
   <script>
     const state = {
@@ -537,6 +601,7 @@
       expandedOrderNo: '',
       loading: false,
       paymentEditor: null,
+      deleteOrderNo: '',
       authToken: '',
       adminProfile: null,
     };
@@ -647,6 +712,24 @@
       $('paymentModal').setAttribute('aria-hidden', 'false');
       $('paymentModalInput').focus();
       $('paymentModalInput').select();
+    }
+
+    function closeDeleteOrderModal() {
+      state.deleteOrderNo = '';
+      $('deleteOrderModal').classList.remove('show');
+      $('deleteOrderModal').setAttribute('aria-hidden', 'true');
+      $('deleteOrderModalInput').value = '';
+      $('deleteOrderModalSubmit').disabled = true;
+    }
+
+    function openDeleteOrderModal(orderNo) {
+      state.deleteOrderNo = orderNo;
+      $('deleteOrderModalOrderNo').textContent = `订单：${orderNo}`;
+      $('deleteOrderModalInput').value = '';
+      $('deleteOrderModalSubmit').disabled = true;
+      $('deleteOrderModal').classList.add('show');
+      $('deleteOrderModal').setAttribute('aria-hidden', 'false');
+      $('deleteOrderModalInput').focus();
     }
 
     function money(fen) {
@@ -761,7 +844,7 @@
       updateExportButtonState();
 
       if (!orders.length) {
-        $('ordersBody').innerHTML = '<tr><td colspan="8" class="empty">没有找到订单</td></tr>';
+        $('ordersBody').innerHTML = '<tr><td colspan="12" class="empty">没有找到订单</td></tr>';
         return;
       }
 
@@ -772,6 +855,8 @@
         const isPendingPay = Number(order.orderStatus) === 5;
         const canStartReturn = [40, 50].includes(Number(order.orderStatus));
         const canRefund = Number(order.orderStatus) === 60;
+        const canCancelReturn = Number(order.orderStatus) === 60;
+        const canDelete = [50, 70].includes(Number(order.orderStatus));
         const isExpanded = state.expandedOrderNo === order.orderNo;
         const receiver = [logistics.receiverName, logistics.receiverPhone].filter(Boolean).join(' ');
         const address = [
@@ -787,10 +872,13 @@
               <div class="order-no">${escapeHtml(order.orderNo)}</div>
               <div class="small">ID：${escapeHtml(order.orderId || '-')}</div>
               <div class="small">交易单：${escapeHtml(payment.transactionId || payment.channelTrxNo || '-')}</div>
-              ${order.salesOpenid ? `<div class="small">销售：${escapeHtml(order.salesNameSnapshot || '-')} / ${escapeHtml(order.salesOpenid)}</div>` : ''}
             </td>
+            <td class="customer-identity">${escapeHtml(order.customerOpenid || order.uid || '-')}</td>
+            <td class="customer-phone">${escapeHtml(order.customerPhoneNumber || '-')}</td>
+            <td class="sales-name">${escapeHtml(order.customerSalesName || '-')}</td>
+            <td class="sales-openid">${escapeHtml(order.customerSalesOpenid || '-')}</td>
             <td class="goods">${goodsSummary(order)}</td>
-            <td>
+            <td class="actions-column">
               <strong>${money(order.paymentAmount || order.totalAmount)}</strong>
               <div class="small">商品：${money(order.goodsAmount || order.totalAmount)}</div>
             </td>
@@ -812,13 +900,15 @@
                 ${isPendingPay ? `<button type="button" data-action="edit-payment" data-order-no="${escapeHtml(order.orderNo)}" data-payment-amount="${escapeHtml(order.paymentAmount || order.totalAmount || '0')}">改金额</button>` : ''}
                 ${isPendingDelivery ? `<button type="button" data-action="toggle-ship" data-order-no="${escapeHtml(order.orderNo)}">${isExpanded ? '收起发货' : '同步发货'}</button>` : ''}
                 ${canStartReturn ? `<button type="button" data-action="start-return" data-order-no="${escapeHtml(order.orderNo)}">退货</button>` : ''}
+                ${canCancelReturn ? `<button type="button" class="secondary" data-action="cancel-return" data-order-no="${escapeHtml(order.orderNo)}">取消退货</button>` : ''}
                 ${canRefund ? `<button type="button" data-action="refund" data-order-no="${escapeHtml(order.orderNo)}" data-payment-amount="${escapeHtml(order.paymentAmount || order.totalAmount || '0')}">退款</button>` : ''}
                 <button type="button" class="secondary" data-action="view" data-order-no="${escapeHtml(order.orderNo)}">查看</button>
+                ${canDelete ? `<button type="button" class="danger" data-action="delete-order" data-order-no="${escapeHtml(order.orderNo)}">删除</button>` : ''}
               </div>
             </td>
           </tr>
           <tr class="ship-row ${isExpanded ? 'active' : ''}">
-            <td colspan="8">
+            <td colspan="12">
               ${renderShipForm(order)}
             </td>
           </tr>
@@ -900,7 +990,7 @@
       state.loading = true;
       $('refreshOrders').disabled = true;
       $('exportOrders').disabled = true;
-      $('ordersBody').innerHTML = '<tr><td colspan="8" class="empty">正在加载订单...</td></tr>';
+      $('ordersBody').innerHTML = '<tr><td colspan="12" class="empty">正在加载订单...</td></tr>';
       updatePager();
       try {
         const params = new URLSearchParams({
@@ -921,7 +1011,7 @@
       } catch (err) {
         state.orders = [];
         state.total = 0;
-        $('ordersBody').innerHTML = `<tr><td colspan="8" class="empty">${escapeHtml(err.message)}</td></tr>`;
+        $('ordersBody').innerHTML = `<tr><td colspan="12" class="empty">${escapeHtml(err.message)}</td></tr>`;
         showNotice(err.message, true);
       } finally {
         state.loading = false;
@@ -1025,6 +1115,47 @@
       }
     }
 
+    async function cancelReturn(orderNo) {
+      if (!ensureAuthenticated()) return;
+      if (!window.confirm(`确认取消订单 ${orderNo} 的退货状态？`)) return;
+
+      try {
+        const json = await requestJson('/api/admin/order/cancel-return', {
+          method: 'POST',
+          headers: headers(),
+          body: JSON.stringify({ orderNo }),
+        });
+        showNotice(json.message || '已取消退货');
+        await loadOrders(state.pageNum);
+      } catch (err) {
+        showNotice(err.message, true);
+      }
+    }
+
+    async function deleteOrder() {
+      if (!ensureAuthenticated() || !state.deleteOrderNo) return;
+      const confirmation = $('deleteOrderModalInput').value.trim();
+      if (confirmation !== '确认删除') {
+        showNotice('请输入“确认删除”后才能删除订单', true);
+        return;
+      }
+      const submitButton = $('deleteOrderModalSubmit');
+      submitButton.disabled = true;
+      try {
+        const json = await requestJson('/api/admin/order/delete', {
+          method: 'POST',
+          headers: headers(),
+          body: JSON.stringify({ orderNo: state.deleteOrderNo, confirmation }),
+        });
+        closeDeleteOrderModal();
+        showNotice(json.message || '订单已删除');
+        await loadOrders(state.pageNum);
+      } catch (err) {
+        showNotice(err.message, true);
+        submitButton.disabled = false;
+      }
+    }
+
     async function refundOrder(orderNo, currentAmount) {
       if (!ensureAuthenticated()) return;
       const currentYuan = (Number(currentAmount || 0) / 100).toFixed(2);
@@ -1071,6 +1202,13 @@
       if (action === 'start-return') {
         startReturn(orderNo);
       }
+      if (action === 'cancel-return') {
+        cancelReturn(orderNo);
+      }
+      if (action === 'delete-order') {
+        if (!ensureAuthenticated()) return;
+        openDeleteOrderModal(orderNo);
+      }
       if (action === 'refund') {
         refundOrder(orderNo, target.dataset.paymentAmount);
       }
@@ -1111,6 +1249,23 @@
       if (!target) return;
       closePaymentModal();
     });
+    $('deleteOrderModalCancel').addEventListener('click', closeDeleteOrderModal);
+    $('deleteOrderModal').addEventListener('click', (event) => {
+      const target = event.target.closest('[data-action="close-delete-order-modal"]');
+      if (!target) return;
+      closeDeleteOrderModal();
+    });
+    $('deleteOrderModalInput').addEventListener('input', () => {
+      $('deleteOrderModalSubmit').disabled = $('deleteOrderModalInput').value.trim() !== '确认删除';
+    });
+    $('deleteOrderModalInput').addEventListener('keydown', async (event) => {
+      if (event.key === 'Enter' && !$('deleteOrderModalSubmit').disabled) {
+        event.preventDefault();
+        await deleteOrder();
+      }
+      if (event.key === 'Escape') closeDeleteOrderModal();
+    });
+    $('deleteOrderModalSubmit').addEventListener('click', deleteOrder);
     $('paymentModalSubmit').addEventListener('click', async () => {
       if (!state.paymentEditor) return;
       await updateOrderPaymentAmount(state.paymentEditor.orderNo, state.paymentEditor.currentAmount);

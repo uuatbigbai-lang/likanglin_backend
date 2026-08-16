@@ -135,6 +135,10 @@ curl -X POST -H 'content-type: application/json' -d '{"action": "inc"}' https://
 
 小程序端在结算页提交订单后，如果后端返回 `payInfo` 会调用 `wx.requestPayment`；未配置微信支付参数时仍保持本地开发的模拟支付成功跳转。本地没有 `MYSQL_ADDRESS` 时，后端向微信支付创建预支付单的金额固定为 0.01 元，订单原始总价仍按商品价格记录。
 
+## 企业微信订单通知
+
+订单新增、更新和删除后会向企业微信群机器人发送 Markdown 通知。可在云托管环境变量中设置 `WECOM_ORDER_WEBHOOK_URL` 覆盖默认机器人地址；将其配置为空可关闭通知。通知发送为异步操作，机器人故障不会影响订单写入或订单状态流转。
+
 本地调试可以在 `backend/.env` 中配置支付参数，例如：
 
 ```env

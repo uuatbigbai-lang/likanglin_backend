@@ -75,6 +75,26 @@ const User = sequelize.define("User", {
   },
 });
 
+const UserAvatar = sequelize.define("UserAvatar", {
+  openid: {
+    type: DataTypes.STRING(128),
+    allowNull: false,
+    unique: true,
+    comment: "微信用户openid",
+  },
+  mimeType: {
+    type: DataTypes.STRING(40),
+    allowNull: false,
+    defaultValue: "image/png",
+    comment: "头像图片类型",
+  },
+  imageData: {
+    type: DataTypes.TEXT("long"),
+    allowNull: false,
+    comment: "头像图片base64内容",
+  },
+});
+
 // 商品数据模型
 const Product = sequelize.define("Product", {
   spuId: {
@@ -754,6 +774,26 @@ const CouponRecord = sequelize.define("CouponRecord", {
     allowNull: true,
     comment: "生成优惠券的管理员openid",
   },
+  rootCouponNo: {
+    type: DataTypes.STRING(64),
+    allowNull: true,
+    comment: "转发链路根优惠券编号",
+  },
+  parentCouponNo: {
+    type: DataTypes.STRING(64),
+    allowNull: true,
+    comment: "转发来源优惠券编号",
+  },
+  forwardedByOpenid: {
+    type: DataTypes.STRING(128),
+    allowNull: true,
+    comment: "本券转发人openid",
+  },
+  forwardedAt: {
+    type: DataTypes.DATE,
+    allowNull: true,
+    comment: "本券转发时间",
+  },
   claimedByOpenid: {
     type: DataTypes.STRING(128),
     allowNull: true,
@@ -789,6 +829,50 @@ const CouponRecord = sequelize.define("CouponRecord", {
     type: DataTypes.JSON,
     defaultValue: {},
     comment: "优惠券规则快照",
+  },
+});
+
+const CouponShareRecord = sequelize.define("CouponShareRecord", {
+  shareId: {
+    type: DataTypes.STRING(80),
+    allowNull: false,
+    unique: true,
+    comment: "分享标识",
+  },
+  couponNo: {
+    type: DataTypes.STRING(64),
+    allowNull: false,
+    comment: "本次分享的目标优惠券编号",
+  },
+  rootCouponNo: {
+    type: DataTypes.STRING(64),
+    allowNull: false,
+    comment: "转发链路根优惠券编号",
+  },
+  parentCouponNo: {
+    type: DataTypes.STRING(64),
+    allowNull: true,
+    comment: "转发来源优惠券编号",
+  },
+  sharerOpenid: {
+    type: DataTypes.STRING(128),
+    allowNull: false,
+    comment: "转发人openid",
+  },
+  sharerRole: {
+    type: DataTypes.STRING(20),
+    allowNull: false,
+    comment: "转发人身份：admin/employee",
+  },
+  recipientOpenid: {
+    type: DataTypes.STRING(128),
+    allowNull: true,
+    comment: "领取人openid",
+  },
+  claimedAt: {
+    type: DataTypes.DATE,
+    allowNull: true,
+    comment: "领取时间",
   },
 });
 
@@ -982,6 +1066,7 @@ const AdminAccount = sequelize.define("AdminAccount", {
 const syncModels = [
   Counter,
   User,
+  UserAvatar,
   Product,
   Address,
   CartItem,
@@ -993,6 +1078,7 @@ const syncModels = [
   UserSalesBindingRecord,
   CouponTemplate,
   CouponRecord,
+  CouponShareRecord,
   Sample,
   HomeAsset,
   HomeBanner,
@@ -1093,6 +1179,26 @@ async function ensureOnlineSchema() {
     defaultValue: false,
     comment: "是否为仅付款订单",
   });
+  await ensureColumn("CouponRecords", "rootCouponNo", {
+    type: DataTypes.STRING(64),
+    allowNull: true,
+    comment: "转发链路根优惠券编号",
+  });
+  await ensureColumn("CouponRecords", "parentCouponNo", {
+    type: DataTypes.STRING(64),
+    allowNull: true,
+    comment: "转发来源优惠券编号",
+  });
+  await ensureColumn("CouponRecords", "forwardedByOpenid", {
+    type: DataTypes.STRING(128),
+    allowNull: true,
+    comment: "本券转发人openid",
+  });
+  await ensureColumn("CouponRecords", "forwardedAt", {
+    type: DataTypes.DATE,
+    allowNull: true,
+    comment: "本券转发时间",
+  });
 }
 
 // 数据库初始化方法
@@ -1111,6 +1217,7 @@ module.exports = {
   init,
   Counter,
   User,
+  UserAvatar,
   Product,
   Address,
   CartItem,
@@ -1122,6 +1229,7 @@ module.exports = {
   UserSalesBindingRecord,
   CouponTemplate,
   CouponRecord,
+  CouponShareRecord,
   Sample,
   HomeAsset,
   HomeBanner,

@@ -198,7 +198,7 @@
     <header class="topbar">
       <div>
         <h1>优惠券管理</h1>
-        <p class="muted">查看优惠券流水、生成归属和领取核销记录。用户与角色绑定已迁移到单独的绑定管理页。</p>
+        <p class="muted">查看优惠券生成、转发、领取和核销记录。用户与角色绑定已迁移到单独的绑定管理页。</p>
       </div>
       <div class="panel admin-card">
         <div id="authStatus" class="auth-status">正在校验登录状态...</div>
@@ -243,6 +243,17 @@
         </div>
         <div id="couponRecords" class="mini-list"></div>
       </div>
+    </section>
+
+    <section class="panel admin-card">
+      <div class="card-head">
+        <div>
+          <h2>转发及使用链路</h2>
+          <div class="small" style="margin-top:4px">按最近分享倒序，展示管理员/员工转发、领取人和最终核销订单。</div>
+        </div>
+        <button id="refreshCouponShareRecords" type="button">刷新</button>
+      </div>
+      <div id="couponShareRecords" class="mini-list"></div>
     </section>
   </main>
 
@@ -374,6 +385,12 @@
       }[status] || status || '-';
     }
 
+    function formatDateTime(value) {
+      if (!value) return '-';
+      const date = new Date(value);
+      return Number.isNaN(date.getTime()) ? '-' : date.toLocaleString('zh-CN', { hour12: false });
+    }
+
     async function loadCouponRecords() {
       const button = $('refreshCoupons');
       button.disabled = true;
@@ -397,6 +414,41 @@
       }
     }
 
+    async function loadCouponShareRecords() {
+      const button = $('refreshCouponShareRecords');
+      button.disabled = true;
+      try {
+        const json = await requestJson('/api/admin/coupon-share-records', { headers: headers() });
+        const records = json.data || [];
+        $('couponShareRecords').innerHTML = records.length ? records.map((item) => {
+          const sharer = [item.sharerName, item.sharerOpenid].filter(Boolean).join(' / ') || '-';
+          const recipient = [item.recipientName, item.recipientOpenid].filter(Boolean).join(' / ') || '待领取';
+          const chainParts = [item.rootCouponNo];
+          if (item.parentCouponNo && item.parentCouponNo !== chainParts[chainParts.length - 1]) chainParts.push(item.parentCouponNo);
+          if (item.couponNo && item.couponNo !== chainParts[chainParts.length - 1]) chainParts.push(item.couponNo);
+          const chain = chainParts.filter(Boolean).join(' → ');
+          const usedText = item.couponStatus === 'used'
+            ? `已核销：${item.usedByOpenid || '-'} / 订单 ${item.orderNo || '-'} / ${formatDateTime(item.usedAt)}`
+            : `券状态：${couponStatusText(item.couponStatus)}`;
+          return `
+            <div class="mini-row">
+              <div>
+                <strong>${escapeHtml(item.sharerRole === 'employee' ? '员工继续转发' : '管理员首次转发')}</strong>
+                <div class="small">链路：${escapeHtml(chain || '-')}</div>
+                <div class="small">转发人：${escapeHtml(sharer)}（${escapeHtml(item.sharerRole || '-')}）</div>
+                <div class="small">领取人：${escapeHtml(recipient)}${item.recipientPhoneNumber ? ` / ${escapeHtml(item.recipientPhoneNumber)}` : ''}</div>
+                <div class="small">分享：${escapeHtml(formatDateTime(item.sharedAt))}；领取：${escapeHtml(formatDateTime(item.claimedAt))}</div>
+                <div class="small">${escapeHtml(usedText)}</div>
+              </div>
+              <span class="badge ${item.couponStatus === 'used' ? 'done' : item.recipientOpenid ? 'pending' : ''}">${escapeHtml(couponStatusText(item.couponStatus))}</span>
+            </div>
+          `;
+        }).join('') : '<div class="empty">暂无转发记录</div>';
+      } finally {
+        button.disabled = false;
+      }
+    }
+
     async function restoreAdminAuth() {
       const raw = readStoredAuth();
       if (!raw) {
@@ -415,6 +467,7 @@
         await Promise.all([
           loadCouponAdmins(),
           loadCouponRecords(),
+          loadCouponShareRecords(),
         ]);
       } catch (err) {
         clearAuth();
@@ -449,6 +502,15 @@
       try {
         await loadCouponRecords();
         showNotice('优惠券流水已刷新');
+      } catch (err) {
+        showNotice(err.message, true);
+      }
+    });
+
+    $('refreshCouponShareRecords').addEventListener('click', async () => {
+      try {
+        await loadCouponShareRecords();
+        showNotice('优惠券转发链路已刷新');
       } catch (err) {
         showNotice(err.message, true);
       }

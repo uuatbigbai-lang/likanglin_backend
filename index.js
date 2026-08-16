@@ -8,6 +8,7 @@ const {
   init: initDB,
   Counter,
   User,
+  UserAvatar,
   Product,
   Address,
   CartItem,
@@ -19,6 +20,7 @@ const {
   UserSalesBindingRecord,
   CouponTemplate,
   CouponRecord,
+  CouponShareRecord,
   Sample,
   HomeAsset,
   HomeBanner,
@@ -38,8 +40,11 @@ const {
   registerAdminAuthRoutes,
   buildSeedAdminAccounts,
 } = require('./adminAuth');
+const { registerOrderNotificationHooks } = require('./orderNotifier');
 
 const logger = morgan('tiny');
+
+registerOrderNotificationHooks(Order);
 
 const HOME_ASSET_DEFINITIONS = [
   { key: 'logo', label: '首页品牌 Logo' },
@@ -201,11 +206,23 @@ const getActiveCouponTemplate = async (templateType) => {
 };
 
 const buildCouponNo = () => `CP${Date.now()}${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+const buildCouponShareId = () => `CS${Date.now()}${Math.random().toString(36).slice(2, 10).toUpperCase()}`;
 
 const isCouponAdmin = async (openid) => {
   if (!openid) return false;
   const count = await AdminWhitelist.count({ where: { openid } });
   return count > 0;
+};
+
+// 现有“销售”角色由后台绑定管理维护，作为优惠券可继续转发的员工身份。
+const isCouponEmployee = async (openid) => {
+  if (!openid) return false;
+  return (await SalesProfile.count({ where: { openid } })) > 0;
+};
+
+const getCouponRootNo = (coupon) => {
+  const data = typeof coupon?.toJSON === 'function' ? coupon.toJSON() : coupon || {};
+  return String(data.rootCouponNo || data.couponNo || '').trim();
 };
 
 const formatCouponRecord = (coupon) => {
@@ -245,6 +262,10 @@ const formatCouponRecord = (coupon) => {
     timeLimit: '长期有效',
     currency: template.ruleType === 'discount' ? '' : '¥',
     createdByOpenid: data.createdByOpenid || '',
+    rootCouponNo: getCouponRootNo(data),
+    parentCouponNo: data.parentCouponNo || '',
+    forwardedByOpenid: data.forwardedByOpenid || '',
+    forwardedAt: data.forwardedAt || null,
     claimedByOpenid: data.claimedByOpenid || '',
     usedByOpenid: data.usedByOpenid || '',
     orderNo: data.orderNo || '',
@@ -269,6 +290,17 @@ const formatCouponRecord = (coupon) => {
     storeAdapt: getScopedSpuIds(template).length
       ? `指定商品可用（${getScopedGoodsSummary(template).map((item) => item.title).join('、') || '部分商品'}）`
       : '商城通用',
+  };
+};
+
+const formatCouponRecordForRequester = async (coupon, openid) => {
+  const data = typeof coupon?.toJSON === 'function' ? coupon.toJSON() : coupon || {};
+  const isOwner = String(data.claimedByOpenid || '') === String(openid || '');
+  const canForward = data.status === 'claimed' && isOwner && await isCouponEmployee(openid);
+  return {
+    ...formatCouponRecord(coupon),
+    canForward,
+    forwardHint: canForward ? '您已通过员工身份验证，可继续转发给好友领取。' : '',
   };
 };
 
@@ -522,7 +554,8 @@ const clearExpiredPendingOrders = async ({ orderNo, orderId } = {}) => {
     where[Op.or] = identifiers;
   }
 
-  return Order.destroy({ where });
+  // individualHooks 保留每笔订单快照，使删除通知能携带实际订单内容。
+  return Order.destroy({ where, individualHooks: true });
 };
 
 const startExpiredPendingOrderCleanupTask = () => {
@@ -552,6 +585,45 @@ const formatUserInfo = (user) => {
     avatarUrl: data.avatarUrl || DEFAULT_USER_AVATAR,
     phoneNumber: data.phoneNumber || '',
     gender: data.gender || 0,
+  };
+};
+
+const USER_AVATAR_MAX_BYTES = 2 * 1024 * 1024;
+const USER_AVATAR_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
+
+const buildUserAvatarPath = (openid, version = Date.now()) => (
+  `/api/user/avatar/${encodeURIComponent(openid)}?v=${encodeURIComponent(version)}`
+);
+
+const parseAvatarImage = (imageBase64 = '', mimeType = '') => {
+  let payload = String(imageBase64 || '').trim();
+  let type = String(mimeType || '').trim().toLowerCase();
+  const dataUrlMatch = payload.match(/^data:(image\/[a-z0-9.+-]+);base64,(.+)$/i);
+
+  if (dataUrlMatch) {
+    type = dataUrlMatch[1].toLowerCase();
+    payload = dataUrlMatch[2];
+  }
+
+  if (!USER_AVATAR_MIME_TYPES.has(type)) {
+    throw new Error('头像仅支持 JPG、PNG 或 WebP 图片');
+  }
+  if (!payload || !/^[a-zA-Z0-9+/=\s]+$/.test(payload)) {
+    throw new Error('头像数据格式异常');
+  }
+
+  const imageBuffer = Buffer.from(payload.replace(/\s/g, ''), 'base64');
+  if (!imageBuffer.length) {
+    throw new Error('头像数据为空');
+  }
+  if (imageBuffer.length > USER_AVATAR_MAX_BYTES) {
+    throw new Error('头像图片不能超过 2MB');
+  }
+
+  return {
+    mimeType: type,
+    imageData: imageBuffer.toString('base64'),
+    imageBuffer,
   };
 };
 
@@ -1727,8 +1799,14 @@ const formatAfterSaleForMiniProgram = (afterSale) => {
   const isReturnGoods = Number(data.rightsType) === 10;
   const logistics = data.logistics || {};
   const hasLogisticsNo = !!logistics.logisticsNo;
+  const isClosed =
+    Number(data.rightsStatus) === AFTER_SERVICE_STATUS.CLOSED ||
+    Number(data.userRightsStatus) === SERVICE_STATUS.CLOSED;
+  const isRefunded = Number(data.userRightsStatus) === SERVICE_STATUS.REFUNDED;
   const userRightsStatusName =
-    Number(data.userRightsStatus) === SERVICE_STATUS.REFUNDED
+    isClosed
+      ? '已关闭'
+      : isRefunded
       ? '已退款'
       : hasLogisticsNo
         ? '买家已寄出'
@@ -1736,23 +1814,33 @@ const formatAfterSaleForMiniProgram = (afterSale) => {
           ? '待买家退货'
           : '待商家处理';
   const userRightsStatusDesc =
-    Number(data.userRightsStatus) === SERVICE_STATUS.REFUNDED
+    isClosed
+      ? '退货/售后申请已取消'
+      : isRefunded
       ? '退款/售后已完成'
       : hasLogisticsNo
         ? '退货物流已提交，商家将尽快收货处理'
         : isReturnGoods
           ? '商家已同意退货，请使用微信退货或填写退货运单'
           : '商家将尽快确认您的退款申请';
+  const canCancel = !isClosed && !isRefunded;
+  const buttonVOs = [];
+
+  if (canCancel) {
+    buttonVOs.push({ name: isReturnGoods ? '取消退货' : '撤销售后', primary: false, type: 2 });
+  }
+
+  if (isReturnGoods && canCancel && !hasLogisticsNo) {
+    buttonVOs.push({ name: '填写运单号', primary: true, type: 3 });
+  } else if (isReturnGoods && canCancel && hasLogisticsNo) {
+    buttonVOs.push(
+      { name: '修改运单号', primary: false, type: 4 },
+      { name: '查看物流', primary: false, type: 5 },
+    );
+  }
 
   return {
-    buttonVOs: isReturnGoods && !hasLogisticsNo
-      ? [{ name: '填写运单号', primary: true, type: 3 }]
-      : hasLogisticsNo
-        ? [
-            { name: '修改运单号', primary: false, type: 4 },
-            { name: '查看物流', primary: false, type: 5 },
-          ]
-        : [],
+    buttonVOs,
     refundMethodList: [{ refundMethodAmount: Number(data.refundRequestAmount || 0), refundMethodName: '微信支付' }],
     createTime: String(createTime),
     rights: {
@@ -1797,6 +1885,34 @@ const formatAfterSaleForMiniProgram = (afterSale) => {
     },
     returnId: data.returnId || '',
   };
+};
+
+const resolveReturnCanceledOrderStatus = (order) => (
+  order.logisticsNo || order.waybillToken
+    ? { orderStatus: 40, orderStatusName: '待收货' }
+    : { orderStatus: 10, orderStatusName: '待发货' }
+);
+
+const cancelAfterSaleApplication = async (afterSale, { restoreOrderStatus = true } = {}) => {
+  if (Number(afterSale.userRightsStatus) === SERVICE_STATUS.REFUNDED) {
+    throw new Error('已退款售后不能取消');
+  }
+
+  if (Number(afterSale.rightsStatus) !== AFTER_SERVICE_STATUS.CLOSED) {
+    await afterSale.update({
+      rightsStatus: AFTER_SERVICE_STATUS.CLOSED,
+      userRightsStatus: SERVICE_STATUS.CLOSED,
+    });
+  }
+
+  if (!restoreOrderStatus) return afterSale;
+
+  const order = await Order.findOne({ where: { orderNo: afterSale.orderNo } });
+  if (order && Number(order.orderStatus) === ORDER_STATUS_RETURNING) {
+    await order.update(resolveReturnCanceledOrderStatus(order));
+  }
+
+  return afterSale;
 };
 
 const SAMPLE_TYPE_LABELS = {
@@ -1971,7 +2087,7 @@ app.post('/api/user/auto-login', async (req, res) => {
 
 app.get('/api/user/sales-profile', async (req, res) => {
   try {
-    const openid = String(req.headers['x-wx-openid'] || '').trim() || 'local_dev_user';
+    const openid = getRequestOpenid(req);
     const salesProfile = await buildSalesProfileWithStats(openid);
     res.send({
       code: 0,
@@ -1986,9 +2102,64 @@ app.get('/api/user/sales-profile', async (req, res) => {
   }
 });
 
+app.get('/api/user/avatar/:openid', async (req, res) => {
+  try {
+    const openid = String(req.params.openid || '').trim();
+    const avatar = await UserAvatar.findOne({ where: { openid } });
+    if (!avatar) return res.redirect(DEFAULT_USER_AVATAR);
+
+    const imageBuffer = Buffer.from(avatar.imageData || '', 'base64');
+    if (!imageBuffer.length) return res.redirect(DEFAULT_USER_AVATAR);
+
+    res.setHeader('Content-Type', avatar.mimeType || 'image/png');
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    return res.send(imageBuffer);
+  } catch (err) {
+    console.error('读取用户头像失败:', err);
+    return res.redirect(DEFAULT_USER_AVATAR);
+  }
+});
+
+app.post('/api/user/avatar', async (req, res) => {
+  try {
+    const openid = getRequestOpenid(req);
+    const { imageBase64, mimeType } = req.body || {};
+    const avatarImage = parseAvatarImage(imageBase64, mimeType);
+
+    await UserAvatar.upsert({
+      openid,
+      mimeType: avatarImage.mimeType,
+      imageData: avatarImage.imageData,
+    });
+
+    const avatarUrl = buildUserAvatarPath(openid);
+    const [user] = await User.findOrCreate({
+      where: { openid },
+      defaults: {
+        openid,
+        nickName: buildDefaultNickName(openid),
+        avatarUrl,
+        phoneNumber: '',
+        gender: 0,
+      },
+    });
+    await user.update({ avatarUrl });
+
+    res.send({
+      code: 0,
+      data: {
+        userInfo: formatUserInfo(user),
+      },
+    });
+  } catch (err) {
+    console.error('更新用户头像失败:', err);
+    res.send({ code: -1, message: err.message });
+  }
+});
+
 app.post('/api/user/profile', async (req, res) => {
   try {
-    const openid = String(req.headers['x-wx-openid'] || '').trim() || 'local_dev_user';
+    const openid = getRequestOpenid(req);
     const hasNickName = Object.prototype.hasOwnProperty.call(req.body || {}, 'nickName');
     const hasAvatarUrl = Object.prototype.hasOwnProperty.call(req.body || {}, 'avatarUrl');
     const rawNickName = String(req.body?.nickName || '');
@@ -2165,12 +2336,14 @@ app.post('/api/coupon/admin/create', async (req, res) => {
       }
     }
 
+    const couponNo = buildCouponNo();
     const coupon = await CouponRecord.create({
-      couponNo: buildCouponNo(),
+      couponNo,
       templateType: template.templateType,
       title: template.title,
       status: 'generated',
       createdByOpenid: openid,
+      rootCouponNo: couponNo,
       meta: {
         ...template,
         scopeSpuIds,
@@ -2252,8 +2425,102 @@ app.get('/api/coupon/detail/:couponNo', async (req, res) => {
   try {
     const coupon = await CouponRecord.findOne({ where: { couponNo: req.params.couponNo } });
     if (!coupon) return res.send({ code: -1, message: '优惠券不存在' });
-    res.send({ code: 0, data: formatCouponRecord(coupon) });
+    const detail = formatCouponRecord(coupon);
+    // 分享页只展示券规则，不能泄露领取人或核销订单信息。
+    delete detail.claimedByOpenid;
+    delete detail.usedByOpenid;
+    delete detail.orderNo;
+    delete detail.discountAmount;
+    delete detail.claimedAt;
+    delete detail.usedAt;
+    res.send({ code: 0, data: detail });
   } catch (err) {
+    res.send({ code: -1, message: err.message });
+  }
+});
+
+app.get('/api/coupon/my/detail/:couponNo', async (req, res) => {
+  try {
+    const openid = req.headers['x-wx-openid'] || 'local_dev_user';
+    const coupon = await CouponRecord.findOne({
+      where: { couponNo: req.params.couponNo, claimedByOpenid: openid },
+    });
+    if (!coupon) return res.send({ code: -1, message: '优惠券不存在或不属于当前用户' });
+    res.send({ code: 0, data: await formatCouponRecordForRequester(coupon, openid) });
+  } catch (err) {
+    res.send({ code: -1, message: err.message });
+  }
+});
+
+app.post('/api/coupon/share', async (req, res) => {
+  try {
+    const openid = req.headers['x-wx-openid'] || 'local_dev_user';
+    const couponNo = String(req.body?.couponNo || '').trim();
+    if (!couponNo) return res.send({ code: -1, message: '缺少优惠券编号' });
+
+    const coupon = await CouponRecord.findOne({ where: { couponNo } });
+    if (!coupon) return res.send({ code: -1, message: '优惠券不存在' });
+
+    if (coupon.status === 'generated') {
+      if (coupon.parentCouponNo) {
+        return res.send({ code: -1, message: '请等待接收人领取后再继续转发' });
+      }
+      if (!(await isCouponAdmin(openid))) {
+        return res.send({ code: -1, message: '仅优惠券管理员可以发起首次转发' });
+      }
+
+      const existingShare = await CouponShareRecord.findOne({
+        where: { couponNo, recipientOpenid: null },
+        order: [['createdAt', 'DESC']],
+      });
+      const share = existingShare || await CouponShareRecord.create({
+        shareId: buildCouponShareId(),
+        couponNo,
+        rootCouponNo: getCouponRootNo(coupon),
+        parentCouponNo: null,
+        sharerOpenid: openid,
+        sharerRole: 'admin',
+      });
+      return res.send({
+        code: 0,
+        data: { couponNo, shareId: share.shareId, shareRole: 'admin' },
+      });
+    }
+
+    if (coupon.status !== 'claimed' || coupon.claimedByOpenid !== openid) {
+      return res.send({ code: -1, message: '只有已领取该优惠券的用户可以继续转发' });
+    }
+    if (!(await isCouponEmployee(openid))) {
+      return res.send({ code: -1, message: '当前用户不是员工身份，领取后不能继续转发' });
+    }
+
+    const childCouponNo = buildCouponNo();
+    const childCoupon = await CouponRecord.create({
+      couponNo: childCouponNo,
+      templateType: coupon.templateType,
+      title: coupon.title,
+      status: 'generated',
+      createdByOpenid: coupon.createdByOpenid,
+      rootCouponNo: getCouponRootNo(coupon),
+      parentCouponNo: coupon.couponNo,
+      forwardedByOpenid: openid,
+      forwardedAt: new Date(),
+      meta: coupon.meta || {},
+    });
+    const share = await CouponShareRecord.create({
+      shareId: buildCouponShareId(),
+      couponNo: childCoupon.couponNo,
+      rootCouponNo: getCouponRootNo(coupon),
+      parentCouponNo: coupon.couponNo,
+      sharerOpenid: openid,
+      sharerRole: 'employee',
+    });
+    res.send({
+      code: 0,
+      data: { couponNo: childCoupon.couponNo, shareId: share.shareId, shareRole: 'employee' },
+    });
+  } catch (err) {
+    console.error('生成优惠券转发链接失败:', err);
     res.send({ code: -1, message: err.message });
   }
 });
@@ -2262,10 +2529,24 @@ app.post('/api/coupon/claim', async (req, res) => {
   try {
     const openid = req.headers['x-wx-openid'] || 'local_dev_user';
     const couponNo = String(req.body?.couponNo || '').trim();
+    const shareId = String(req.body?.shareId || '').trim();
     if (!couponNo) return res.send({ code: -1, message: '缺少优惠券编号' });
 
     const coupon = await CouponRecord.findOne({ where: { couponNo } });
     if (!coupon) return res.send({ code: -1, message: '优惠券不存在' });
+    let shareRecord = null;
+    if (shareId) {
+      shareRecord = await CouponShareRecord.findOne({ where: { shareId, couponNo } });
+      if (!shareRecord) return res.send({ code: -1, message: '优惠券分享链接无效' });
+      if (shareRecord.recipientOpenid && shareRecord.recipientOpenid !== openid) {
+        return res.send({ code: -1, message: '该优惠券已被其他用户领取' });
+      }
+    } else {
+      const pendingShare = await CouponShareRecord.findOne({
+        where: { couponNo, recipientOpenid: null },
+      });
+      if (pendingShare) return res.send({ code: -1, message: '请通过有效的优惠券分享链接领取' });
+    }
     if (coupon.status === 'used') return res.send({ code: -1, message: '优惠券已核销' });
     if (coupon.status === 'claimed' && coupon.claimedByOpenid && coupon.claimedByOpenid !== openid) {
       return res.send({ code: -1, message: '优惠券已被领取' });
@@ -2280,7 +2561,11 @@ app.post('/api/coupon/claim', async (req, res) => {
       });
     }
 
-    res.send({ code: 0, data: formatCouponRecord(coupon) });
+    if (shareRecord && !shareRecord.recipientOpenid) {
+      await shareRecord.update({ recipientOpenid: openid, claimedAt: new Date() });
+    }
+
+    res.send({ code: 0, data: await formatCouponRecordForRequester(coupon, openid) });
   } catch (err) {
     res.send({ code: -1, message: err.message });
   }
@@ -2309,6 +2594,52 @@ app.get('/api/admin/coupons', adminAuth, async (req, res) => {
   try {
     const coupons = await CouponRecord.findAll({ order: [['createdAt', 'DESC']] });
     res.send({ code: 0, data: coupons.map(formatCouponRecord) });
+  } catch (err) {
+    res.send({ code: -1, message: err.message });
+  }
+});
+
+app.get('/api/admin/coupon-share-records', adminAuth, async (req, res) => {
+  try {
+    const shareRecords = await CouponShareRecord.findAll({ order: [['createdAt', 'DESC']], limit: 500 });
+    const couponNos = Array.from(new Set(shareRecords.map((item) => item.couponNo).filter(Boolean)));
+    const coupons = couponNos.length
+      ? await CouponRecord.findAll({ where: { couponNo: { [Op.in]: couponNos } } })
+      : [];
+    const couponMap = new Map(coupons.map((item) => [item.couponNo, item]));
+    const openids = Array.from(new Set(shareRecords.flatMap((item) => [item.sharerOpenid, item.recipientOpenid]).filter(Boolean)));
+    const users = openids.length
+      ? await User.findAll({ attributes: ['openid', 'nickName', 'phoneNumber'], where: { openid: { [Op.in]: openids } } })
+      : [];
+    const userMap = new Map(users.map((item) => [item.openid, item]));
+
+    res.send({
+      code: 0,
+      data: shareRecords.map((record) => {
+        const coupon = couponMap.get(record.couponNo);
+        const sharer = userMap.get(record.sharerOpenid);
+        const recipient = userMap.get(record.recipientOpenid);
+        return {
+          shareId: record.shareId,
+          couponNo: record.couponNo,
+          rootCouponNo: record.rootCouponNo,
+          parentCouponNo: record.parentCouponNo || '',
+          sharerOpenid: record.sharerOpenid,
+          sharerName: sharer?.nickName || '',
+          sharerRole: record.sharerRole,
+          recipientOpenid: record.recipientOpenid || '',
+          recipientName: recipient?.nickName || '',
+          recipientPhoneNumber: recipient?.phoneNumber || '',
+          sharedAt: record.createdAt,
+          claimedAt: record.claimedAt || null,
+          couponStatus: coupon?.status || 'deleted',
+          usedByOpenid: coupon?.usedByOpenid || '',
+          orderNo: coupon?.orderNo || '',
+          usedAt: coupon?.usedAt || null,
+          discountAmount: coupon?.discountAmount || '0',
+        };
+      }),
+    });
   } catch (err) {
     res.send({ code: -1, message: err.message });
   }
@@ -3776,10 +4107,7 @@ app.post('/api/after-sale/cancel', async (req, res) => {
     const { rightsNo } = req.body || {};
     const afterSale = await AfterSale.findOne({ where: { rightsNo, openid } });
     if (!afterSale) return res.send({ code: -1, message: '售后单不存在' });
-    await afterSale.update({
-      rightsStatus: AFTER_SERVICE_STATUS.CLOSED,
-      userRightsStatus: SERVICE_STATUS.CLOSED,
-    });
+    await cancelAfterSaleApplication(afterSale);
     res.send({ code: 0, data: formatAfterSaleForMiniProgram(afterSale) });
   } catch (err) {
     res.send({ code: -1, message: err.message });
@@ -4157,7 +4485,25 @@ app.get('/api/admin/orders', adminAuth, async (req, res) => {
     }
 
     const { rows, count } = await Order.findAndCountAll(findOptions);
-    const afterSaleMap = await fetchAfterSalesForOrders(rows.map((order) => order.orderNo));
+    const customerOpenids = Array.from(new Set(
+      rows.map((order) => String(order.openid || '').trim()).filter(Boolean),
+    ));
+    const [afterSaleMap, users, salesBindings] = await Promise.all([
+      fetchAfterSalesForOrders(rows.map((order) => order.orderNo)),
+      customerOpenids.length
+        ? User.findAll({
+            attributes: ['openid', 'phoneNumber'],
+            where: { openid: { [Op.in]: customerOpenids } },
+          })
+        : Promise.resolve([]),
+      customerOpenids.length
+        ? UserSalesBinding.findAll({ where: { userOpenid: { [Op.in]: customerOpenids } } })
+        : Promise.resolve([]),
+    ]);
+    const userMap = new Map(users.map((user) => [String(user.openid || '').trim(), user]));
+    const salesBindingMap = new Map(
+      salesBindings.map((binding) => [String(binding.userOpenid || '').trim(), formatUserSalesBinding(binding)]),
+    );
     const statuses = [-1, 5, 10, 40, 50, ORDER_STATUS_RETURNING, ORDER_STATUS_REFUNDED];
     const tabCounts = await Promise.all(
       statuses.map(async (status) => ({
@@ -4169,7 +4515,23 @@ app.get('/api/admin/orders', adminAuth, async (req, res) => {
     res.send({
       code: 0,
       data: {
-        orders: rows.map((order) => formatOrderForMiniProgram(order, afterSaleMap[order.orderNo] || [])),
+        orders: rows.map((order) => {
+          const data = typeof order.toJSON === 'function' ? order.toJSON() : order;
+          const formattedOrder = formatOrderForMiniProgram(order, afterSaleMap[order.orderNo] || []);
+          const customerOpenid = String(data.openid || '').trim();
+          const customer = userMap.get(customerOpenid);
+          const currentBinding = salesBindingMap.get(customerOpenid);
+          const address = data.userAddress || {};
+          return {
+            ...formattedOrder,
+            customerOpenid,
+            customerPhoneNumber: String(
+              customer?.phoneNumber || address.phone || address.phoneNumber || '',
+            ).trim(),
+            customerSalesName: currentBinding?.salesNameSnapshot || formattedOrder.salesNameSnapshot || '',
+            customerSalesOpenid: currentBinding?.salesOpenid || formattedOrder.salesOpenid || '',
+          };
+        }),
         total: count,
         pageNum,
         pageSize: showAll ? 'all' : pageSize,
@@ -4178,6 +4540,41 @@ app.get('/api/admin/orders', adminAuth, async (req, res) => {
     });
   } catch (err) {
     console.error('获取管理订单列表失败:', err);
+    res.send({ code: -1, message: err.message });
+  }
+});
+
+app.post('/api/admin/order/delete', adminAuth, async (req, res) => {
+  try {
+    const { orderNo, confirmation } = req.body || {};
+    const normalizedOrderNo = String(orderNo || '').trim();
+    if (!normalizedOrderNo) return res.send({ code: -1, message: '请填写订单号' });
+    if (String(confirmation || '').trim() !== '确认删除') {
+      return res.send({ code: -1, message: '请输入“确认删除”后才能删除订单' });
+    }
+
+    const order = await Order.findOne({ where: { orderNo: normalizedOrderNo } });
+    if (!order) return res.send({ code: -1, message: '订单不存在或已删除' });
+    if (![50, ORDER_STATUS_REFUNDED].includes(Number(order.orderStatus))) {
+      return res.send({ code: -1, message: '仅已完成或已退款的历史订单可以删除' });
+    }
+
+    const activeAfterSaleCount = await AfterSale.count({
+      where: {
+        orderNo: normalizedOrderNo,
+        rightsStatus: { [Op.ne]: AFTER_SERVICE_STATUS.CLOSED },
+        userRightsStatus: { [Op.ne]: SERVICE_STATUS.REFUNDED },
+      },
+    });
+    if (activeAfterSaleCount > 0) {
+      return res.send({ code: -1, message: '订单存在进行中的售后，暂时不能删除' });
+    }
+
+    // individualHooks 会保留订单快照，并触发企业微信的订单删除通知。
+    await order.destroy({ individualHooks: true });
+    res.send({ code: 0, message: '订单已删除', data: { orderNo: normalizedOrderNo } });
+  } catch (err) {
+    console.error('管理端删除订单失败:', err);
     res.send({ code: -1, message: err.message });
   }
 });
@@ -4311,6 +4708,38 @@ app.post('/api/admin/order/return', adminAuth, async (req, res) => {
     });
   } catch (err) {
     console.error('管理端设置退货中失败:', err);
+    res.send({ code: -1, message: err.message });
+  }
+});
+
+app.post('/api/admin/order/cancel-return', adminAuth, async (req, res) => {
+  try {
+    const { orderNo } = req.body || {};
+    if (!orderNo) return res.send({ code: -1, message: '请填写订单号' });
+
+    const order = await Order.findOne({ where: { orderNo } });
+    if (!order) return res.send({ code: -1, message: '订单不存在' });
+    if (Number(order.orderStatus) !== ORDER_STATUS_RETURNING) {
+      return res.send({ code: -1, message: '只有退货中订单可以取消退货' });
+    }
+
+    const afterSales = await AfterSale.findAll({
+      where: {
+        orderNo,
+        rightsStatus: { [Op.ne]: AFTER_SERVICE_STATUS.CLOSED },
+        userRightsStatus: { [Op.ne]: SERVICE_STATUS.REFUNDED },
+      },
+    });
+    await Promise.all(afterSales.map((afterSale) => cancelAfterSaleApplication(afterSale, { restoreOrderStatus: false })));
+    await order.update(resolveReturnCanceledOrderStatus(order));
+
+    res.send({
+      code: 0,
+      message: '已取消退货',
+      data: formatOrderForMiniProgram(order, await fetchAfterSalesForOrder(order.orderNo)),
+    });
+  } catch (err) {
+    console.error('管理端取消退货失败:', err);
     res.send({ code: -1, message: err.message });
   }
 });
