@@ -3371,7 +3371,7 @@ app.get('/api/products', async (req, res) => {
         'pictureSpuId',
       ],
     };
-    if (isForAudit) findOptions.limit = 3;
+    if (isForAudit) findOptions.limit = 2;
 
     const products = await Product.findAll(findOptions);
     const data = products.map(withCloudProductPictures);
