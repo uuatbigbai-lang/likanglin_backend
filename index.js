@@ -143,7 +143,7 @@ const DEFAULT_COUPON_TEMPLATES = [
   value: 0,
   thresholdAmount: 0,
   minQuantity: 0,
-  desc: '按商品已配置的员工价结算，仅对配置了员工价的商品生效；使用时加收15元快递费',
+  desc: '按商品已配置的员工价结算，仅对配置了员工价的商品生效；收货下单时加收15元快递费',
     sort: 10,
   },
   {
@@ -315,7 +315,7 @@ const formatCouponRecord = (coupon) => {
     useNotes: template.ruleType === 'buy_x_get_y'
       ? `订单内商品数量每满${template.minQuantity || 3}件，自动抵扣${template.value || 1}件商品金额；多种商品会一起累计计算。`
       : template.ruleType === 'employee_price'
-        ? '仅对已配置员工价的商品生效，下单时按员工价自动抵扣差额，并加收15元快递费。'
+        ? '仅对已配置员工价的商品生效，下单时按员工价自动抵扣差额；收货下单时加收15元快递费。'
         : isExperiencePrice
           ? `仅限第三代16S、二代肠道及阴道菌群检测服务；${experienceShared ? '符合条件的每件商品均享体验价。' : '购物车内仅价格最高的一件商品享体验价。'}`
         : getScopedSpuIds(template).length
@@ -536,9 +536,9 @@ const calculateCouponDiscount = (coupon, goodsList = [], totalAmount = 0) => {
   return 0;
 };
 
-const getCouponFreight = (coupon) => {
+const getCouponFreight = (coupon, { isOnlyPayment = false } = {}) => {
   const template = getCouponTemplateSnapshot(coupon);
-  if (template.templateType !== 'employee_special') {
+  if (template.templateType !== 'employee_special' || isOnlyPayment) {
     return { amount: 0, snapshot: null };
   }
   return {
@@ -4054,7 +4054,7 @@ app.post('/api/cart/delete', async (req, res) => {
 app.post('/api/order/settle', async (req, res) => {
   try {
     const openid = req.headers['x-wx-openid'] || 'local_dev_user';
-    const { goodsRequestList = [], couponList = [], couponNo = '' } = req.body;
+    const { goodsRequestList = [], couponList = [], couponNo = '', isOnlyPayment = false } = req.body;
     const boundSales = await getBoundSalesForUser(openid);
     const pricedGoodsList = await buildPricedGoodsList(goodsRequestList);
     const requestedCouponNo = getRequestedCouponNo(couponList, couponNo);
@@ -4091,7 +4091,9 @@ app.post('/api/order/settle', async (req, res) => {
       ? (couponCandidates.find((item) => item.amount > 0) || null)
       : (couponCandidates.find((item) => item.amount > 0) || null);
     const totalCouponAmount = selectedCoupon ? selectedCoupon.amount : 0;
-    const freight = selectedCoupon ? getCouponFreight(selectedCoupon.coupon) : { amount: 0, snapshot: null };
+    const freight = selectedCoupon
+      ? getCouponFreight(selectedCoupon.coupon, { isOnlyPayment: !!isOnlyPayment })
+      : { amount: 0, snapshot: null };
     const totalPayAmount = Math.max(totalSalePrice - totalCouponAmount + freight.amount, 1);
     const settleCouponList = couponCandidates.map(({ coupon, amount }) => {
       const formatted = formatCouponRecord(coupon);
@@ -5176,6 +5178,7 @@ app.post('/api/order/create', async (req, res) => {
       logisticsCompanyCode,
       logisticsCompanyName,
       couponNo,
+      isOnlyPayment = false,
     } = req.body;
     const codeOpenid = await getOpenidByCode(authorizationCode);
     const openid = headerOpenid || codeOpenid || 'local_dev_user';
@@ -5199,7 +5202,9 @@ app.post('/api/order/create', async (req, res) => {
       }))
       .find((item) => item.amount > 0);
     const couponAmount = selectedCoupon ? selectedCoupon.amount : 0;
-    const freight = selectedCoupon ? getCouponFreight(selectedCoupon.coupon) : { amount: 0, snapshot: null };
+    const freight = selectedCoupon
+      ? getCouponFreight(selectedCoupon.coupon, { isOnlyPayment: !!isOnlyPayment })
+      : { amount: 0, snapshot: null };
     const paymentAmount = Math.max(calcTotal - couponAmount + freight.amount, 1);
     const couponSnapshot = selectedCoupon
       ? { ...formatCouponRecord(selectedCoupon.coupon), discountAmount: String(couponAmount) }
@@ -5225,6 +5230,7 @@ app.post('/api/order/create', async (req, res) => {
       goodsList: pricedGoodsList, // 完整商品快照（含名称、图片、规格、单价、数量）
       userAddress: userAddress || null,
       userName: userName || '',
+      isOnlyPayment: !!isOnlyPayment,
       remark: remark || '',
       waybillToken: waybillToken || null,
       logisticsNo: logisticsNo || null,
