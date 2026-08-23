@@ -378,6 +378,17 @@ const Order = sequelize.define("Order", {
     type: DataTypes.STRING(20),
     comment: "实付金额（分）",
   },
+  freightFee: {
+    type: DataTypes.STRING(20),
+    allowNull: false,
+    defaultValue: "0",
+    comment: "快递费（分）",
+  },
+  freightSnapshot: {
+    type: DataTypes.JSON,
+    defaultValue: null,
+    comment: "下单时快递费规则快照",
+  },
   couponNo: {
     type: DataTypes.STRING(64),
     allowNull: true,
@@ -590,6 +601,12 @@ const SalesProfile = sequelize.define("SalesProfile", {
     defaultValue: "",
     comment: "用户昵称快照",
   },
+  remarkName: {
+    type: DataTypes.STRING(80),
+    allowNull: false,
+    defaultValue: "",
+    comment: "后台管理备注名",
+  },
   remark: {
     type: DataTypes.STRING(100),
     allowNull: true,
@@ -615,6 +632,12 @@ const UserSalesBinding = sequelize.define("UserSalesBinding", {
     allowNull: false,
     defaultValue: "",
     comment: "绑定时销售名称快照",
+  },
+  customerRemarkName: {
+    type: DataTypes.STRING(80),
+    allowNull: false,
+    defaultValue: "",
+    comment: "后台管理客户备注名",
   },
   sourcePage: {
     type: DataTypes.STRING(64),
@@ -659,6 +682,12 @@ const UserSalesBindingRecord = sequelize.define("UserSalesBindingRecord", {
     defaultValue: "",
     comment: "绑定时销售名称快照",
   },
+  customerRemarkName: {
+    type: DataTypes.STRING(80),
+    allowNull: false,
+    defaultValue: "",
+    comment: "后台管理客户备注名快照",
+  },
   previousSalesOpenid: {
     type: DataTypes.STRING(128),
     allowNull: true,
@@ -669,6 +698,12 @@ const UserSalesBindingRecord = sequelize.define("UserSalesBindingRecord", {
     allowNull: false,
     defaultValue: "",
     comment: "上一次绑定销售名称快照",
+  },
+  bindingStatus: {
+    type: DataTypes.STRING(16),
+    allowNull: false,
+    defaultValue: "bound",
+    comment: "绑定状态 bound/unbound",
   },
   sourcePage: {
     type: DataTypes.STRING(64),
@@ -1110,6 +1145,30 @@ async function ensureOnlineSchema() {
     defaultValue: 0,
     comment: "员工价（分），0 表示未配置",
   });
+  await ensureColumn("SalesProfiles", "remarkName", {
+    type: DataTypes.STRING(80),
+    allowNull: false,
+    defaultValue: "",
+    comment: "后台管理备注名",
+  });
+  await ensureColumn("UserSalesBindingRecords", "bindingStatus", {
+    type: DataTypes.STRING(16),
+    allowNull: false,
+    defaultValue: "bound",
+    comment: "绑定状态 bound/unbound",
+  });
+  await ensureColumn("UserSalesBindings", "customerRemarkName", {
+    type: DataTypes.STRING(80),
+    allowNull: false,
+    defaultValue: "",
+    comment: "后台管理客户备注名",
+  });
+  await ensureColumn("UserSalesBindingRecords", "customerRemarkName", {
+    type: DataTypes.STRING(80),
+    allowNull: false,
+    defaultValue: "",
+    comment: "后台管理客户备注名快照",
+  });
   await ensureColumn("Users", "latestUsersVisible", {
     type: DataTypes.BOOLEAN,
     allowNull: false,
@@ -1172,6 +1231,17 @@ async function ensureOnlineSchema() {
     type: DataTypes.STRING(64),
     allowNull: true,
     comment: "使用的优惠券编号",
+  });
+  await ensureColumn("Orders", "freightFee", {
+    type: DataTypes.STRING(20),
+    allowNull: false,
+    defaultValue: "0",
+    comment: "快递费（分）",
+  });
+  await ensureColumn("Orders", "freightSnapshot", {
+    type: DataTypes.JSON,
+    defaultValue: null,
+    comment: "下单时快递费规则快照",
   });
   await ensureColumn("Orders", "couponAmount", {
     type: DataTypes.STRING(20),

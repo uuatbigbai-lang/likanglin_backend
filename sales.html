@@ -260,6 +260,7 @@
         <table>
           <thead>
             <tr>
+              <th style="width:160px">备注名</th>
               <th style="width:180px">销售名字</th>
               <th style="width:280px">openid</th>
               <th style="width:120px">订单数</th>
@@ -271,7 +272,7 @@
             </tr>
           </thead>
           <tbody id="salesBody">
-            <tr><td colspan="8" class="empty">正在加载销售数据...</td></tr>
+            <tr><td colspan="9" class="empty">正在加载销售数据...</td></tr>
           </tbody>
         </table>
       </div>
@@ -290,6 +291,7 @@
             <thead>
               <tr>
                 <th style="width:260px">用户openid</th>
+                <th style="width:180px">客户备注名</th>
                 <th style="width:180px">销售</th>
                 <th style="width:140px">来源页</th>
                 <th style="width:120px">商品SPU</th>
@@ -297,7 +299,7 @@
               </tr>
             </thead>
             <tbody id="bindingBody">
-              <tr><td colspan="5" class="empty">正在加载绑定关系...</td></tr>
+              <tr><td colspan="6" class="empty">正在加载绑定关系...</td></tr>
             </tbody>
           </table>
         </div>
@@ -316,6 +318,7 @@
               <tr>
                 <th style="width:220px">绑定时间</th>
                 <th style="width:250px">用户openid</th>
+                <th style="width:180px">客户备注名</th>
                 <th style="width:180px">新销售</th>
                 <th style="width:180px">原销售</th>
                 <th style="width:140px">来源页</th>
@@ -323,7 +326,7 @@
               </tr>
             </thead>
             <tbody id="bindingRecordBody">
-              <tr><td colspan="6" class="empty">正在加载绑定记录...</td></tr>
+              <tr><td colspan="7" class="empty">正在加载绑定记录...</td></tr>
             </tbody>
           </table>
         </div>
@@ -346,14 +349,16 @@
             <thead>
               <tr>
                 <th style="width:180px">用户名</th>
+                <th style="width:180px">客户备注名</th>
                 <th style="width:180px">昵称</th>
                 <th style="width:280px">openid</th>
                 <th style="width:160px">手机号</th>
                 <th style="width:220px">绑定时间</th>
+                <th style="width:220px">操作</th>
               </tr>
             </thead>
             <tbody id="boundUsersBody">
-              <tr><td colspan="5" class="empty">请选择销售查看绑定用户</td></tr>
+              <tr><td colspan="7" class="empty">请选择销售查看绑定用户</td></tr>
             </tbody>
           </table>
         </div>
@@ -364,11 +369,32 @@
     </div>
   </div>
 
+  <div id="reassignBoundUserModal" class="modal" aria-hidden="true">
+    <div class="modal-card panel" role="dialog" aria-modal="true" aria-labelledby="reassignBoundUserTitle">
+      <div class="modal-head">
+        <div>
+          <h3 id="reassignBoundUserTitle" class="modal-title">修改客户绑定</h3>
+          <div id="reassignBoundUserMeta" class="small" style="margin-top:4px">-</div>
+        </div>
+        <button id="closeReassignBoundUserModal" class="subtle" type="button">关闭</button>
+      </div>
+      <div class="modal-body">
+        <p class="small">选择新的销售后立即生效，系统会保留本次换绑记录。</p>
+        <div id="reassignSalesList" class="mini-list"></div>
+      </div>
+      <div class="modal-foot">
+        <button id="reassignBoundUserCancel" class="subtle" type="button">取消</button>
+      </div>
+    </div>
+  </div>
+
   <script>
     const state = {
       authToken: '',
       adminProfile: null,
       activeSalesBoundUsers: null,
+      salesList: [],
+      selectedBoundUser: null,
     };
     const AUTH_STORAGE_KEY = 'admin-auth-v1';
     const $ = (id) => document.getElementById(id);
@@ -466,12 +492,108 @@
       $('boundUsersBody').innerHTML = users.length ? users.map((item) => `
         <tr>
           <td>${escapeHtml(item.userName || '-')}</td>
+          <td>${escapeHtml(item.customerRemarkName || '-')}</td>
           <td>${escapeHtml(item.nickName || '-')}</td>
           <td>${escapeHtml(item.openid || '-')}</td>
           <td>${escapeHtml(item.phoneNumber || '-')}</td>
           <td>${escapeHtml(formatDateTime(item.boundAt))}</td>
+          <td>
+            <button class="subtle" type="button" data-action="edit-bound-user-remark" data-user-openid="${escapeHtml(item.openid || '')}" data-user-name="${escapeHtml(item.userName || item.nickName || '')}" data-customer-remark-name="${escapeHtml(item.customerRemarkName || '')}">客户备注</button>
+            <button class="subtle" type="button" data-action="reassign-bound-user" data-user-openid="${escapeHtml(item.openid || '')}" data-user-name="${escapeHtml(item.userName || item.nickName || '')}">修改绑定</button>
+            <button class="subtle" type="button" data-action="remove-bound-user" data-user-openid="${escapeHtml(item.openid || '')}" data-user-name="${escapeHtml(item.userName || item.nickName || '')}">删除绑定</button>
+          </td>
         </tr>
-      `).join('') : '<tr><td colspan="5" class="empty">该销售下暂无绑定用户</td></tr>';
+      `).join('') : '<tr><td colspan="7" class="empty">该销售下暂无绑定用户</td></tr>';
+    }
+
+    function openReassignBoundUserModal(userOpenid, userName) {
+      state.selectedBoundUser = { openid: String(userOpenid || '').trim(), name: String(userName || '').trim() };
+      if (!state.selectedBoundUser.openid) return;
+      $('reassignBoundUserTitle').textContent = '修改客户绑定';
+      $('reassignBoundUserMeta').textContent = `${state.selectedBoundUser.name || '未命名客户'} / ${state.selectedBoundUser.openid}`;
+      const sourceSalesOpenid = state.activeSalesBoundUsers?.salesOpenid || '';
+      const candidates = (state.salesList || []).filter((item) => String(item.openid || '') !== sourceSalesOpenid);
+      $('reassignSalesList').innerHTML = candidates.length ? candidates.map((item) => `
+        <div class="mini-item">
+          <div><strong>${escapeHtml(item.salesName || item.userNickName || '未命名销售')}</strong><div class="small">${escapeHtml(item.openid || '')}</div></div>
+          <button class="subtle" type="button" data-action="confirm-reassign-bound-user" data-sales-openid="${escapeHtml(item.openid || '')}" data-sales-name="${escapeHtml(item.salesName || item.userNickName || '')}">绑定到此销售</button>
+        </div>
+      `).join('') : '<div class="empty">暂无可选销售</div>';
+      $('reassignBoundUserModal').classList.add('show');
+      $('reassignBoundUserModal').setAttribute('aria-hidden', 'false');
+    }
+
+    function closeReassignBoundUserModal() {
+      $('reassignBoundUserModal').classList.remove('show');
+      $('reassignBoundUserModal').setAttribute('aria-hidden', 'true');
+      state.selectedBoundUser = null;
+    }
+
+    async function reassignBoundUser(salesOpenid, salesName) {
+      const user = state.selectedBoundUser;
+      if (!user?.openid || !salesOpenid) return;
+      if (!window.confirm(`确认将客户 ${user.name || user.openid} 绑定到“${salesName || salesOpenid}”名下？`)) return;
+      try {
+        const json = await requestJson('/api/admin/sales/bindings/reassign', {
+          method: 'POST',
+          headers: headers(),
+          body: JSON.stringify({ userOpenid: user.openid, salesOpenid }),
+        });
+        closeReassignBoundUserModal();
+        showNotice(`已将客户绑定到 ${json.data.salesName || salesName || salesOpenid}`);
+        const previousSales = state.activeSalesBoundUsers;
+        await Promise.all([loadSales(), loadBindings()]);
+        if (previousSales?.salesOpenid) {
+          await openBoundUsersPopup(previousSales.salesOpenid, previousSales.salesName, 0);
+        }
+      } catch (err) {
+        showNotice(err.message, true);
+      }
+    }
+
+    async function removeBoundUser(userOpenid, userName) {
+      const normalizedUserOpenid = String(userOpenid || '').trim();
+      if (!normalizedUserOpenid) return;
+      if (!window.confirm(`确认删除客户 ${userName || normalizedUserOpenid} 的销售绑定吗？删除后该客户不再归属任何销售。`)) return;
+      try {
+        await requestJson(`/api/admin/sales/bindings/${encodeURIComponent(normalizedUserOpenid)}`, {
+          method: 'DELETE',
+          headers: headers(),
+        });
+        showNotice('客户绑定已删除');
+        const previousSales = state.activeSalesBoundUsers;
+        await Promise.all([loadSales(), loadBindings()]);
+        if (previousSales?.salesOpenid) {
+          await openBoundUsersPopup(previousSales.salesOpenid, previousSales.salesName, 0);
+        }
+      } catch (err) {
+        showNotice(err.message, true);
+      }
+    }
+
+    async function editBoundUserRemark(userOpenid, userName, currentRemarkName) {
+      const normalizedUserOpenid = String(userOpenid || '').trim();
+      if (!normalizedUserOpenid) return;
+      const customerRemarkName = window.prompt(
+        `请输入客户 ${userName || normalizedUserOpenid} 的后台备注名（留空可清除）`,
+        currentRemarkName || '',
+      );
+      if (customerRemarkName === null) return;
+      try {
+        await requestJson(`/api/admin/sales/bindings/${encodeURIComponent(normalizedUserOpenid)}/customer-remark-name`, {
+          method: 'POST',
+          headers: headers(),
+          body: JSON.stringify({ customerRemarkName }),
+        });
+        showNotice('客户备注名已更新');
+        const previousSales = state.activeSalesBoundUsers;
+        await loadBindings();
+        if (previousSales?.salesOpenid) {
+          await openBoundUsersPopup(previousSales.salesOpenid, previousSales.salesName, 0);
+        }
+      } catch (err) {
+        showNotice(err.message, true);
+      }
     }
 
     async function openBoundUsersPopup(salesOpenid, salesName, boundCount) {
@@ -481,7 +603,7 @@
       };
       $('boundUsersTitle').textContent = `${state.activeSalesBoundUsers.salesName || '该销售'}的绑定用户`;
       $('boundUsersMeta').textContent = `销售openid：${state.activeSalesBoundUsers.salesOpenid || '-'}，当前绑定 ${Number(boundCount || 0)} 人`;
-      $('boundUsersBody').innerHTML = '<tr><td colspan="5" class="empty">正在加载绑定用户...</td></tr>';
+      $('boundUsersBody').innerHTML = '<tr><td colspan="7" class="empty">正在加载绑定用户...</td></tr>';
       openBoundUsersModal();
       try {
         const json = await requestJson(`/api/admin/sales/${encodeURIComponent(state.activeSalesBoundUsers.salesOpenid)}/bound-users`, {
@@ -489,7 +611,7 @@
         });
         renderBoundUsers(json.data || []);
       } catch (err) {
-        $('boundUsersBody').innerHTML = `<tr><td colspan="5" class="empty">${escapeHtml(err.message)}</td></tr>`;
+        $('boundUsersBody').innerHTML = `<tr><td colspan="7" class="empty">${escapeHtml(err.message)}</td></tr>`;
         showNotice(err.message, true);
       }
     }
@@ -513,8 +635,13 @@
       try {
         const json = await requestJson('/api/admin/sales', { headers: headers() });
         const salesList = json.data || [];
+        state.salesList = salesList;
         $('salesBody').innerHTML = salesList.length ? salesList.map((item) => `
           <tr>
+            <td>
+              <strong>${escapeHtml(item.remarkName || '-')}</strong>
+              <div><button class="link-button" type="button" data-action="edit-remark-name" data-openid="${escapeHtml(item.openid || '')}" data-remark-name="${escapeHtml(item.remarkName || '')}">修改备注名</button></div>
+            </td>
             <td>
               <strong>${escapeHtml(item.salesName || item.userNickName || '未命名销售')}</strong>
               <div class="small">${escapeHtml(item.userNickName || '-')}</div>
@@ -539,9 +666,9 @@
               <button class="subtle" type="button" data-action="delete-sales" data-openid="${escapeHtml(item.openid || '')}">删除</button>
             </td>
           </tr>
-        `).join('') : '<tr><td colspan="8" class="empty">暂无销售</td></tr>';
+        `).join('') : '<tr><td colspan="9" class="empty">暂无销售</td></tr>';
       } catch (err) {
-        $('salesBody').innerHTML = `<tr><td colspan="8" class="empty">${escapeHtml(err.message)}</td></tr>`;
+        $('salesBody').innerHTML = `<tr><td colspan="9" class="empty">${escapeHtml(err.message)}</td></tr>`;
         showNotice(err.message, true);
       } finally {
         button.disabled = false;
@@ -556,6 +683,7 @@
         $('bindingBody').innerHTML = bindings.length ? bindings.map((item) => `
           <tr>
             <td>${escapeHtml(item.userOpenid || '-')}</td>
+            <td>${escapeHtml(item.customerRemarkName || '-')}</td>
             <td>
               <strong>${escapeHtml(item.salesNameSnapshot || '-')}</strong>
               <div class="small">${escapeHtml(item.salesOpenid || '-')}</div>
@@ -564,11 +692,12 @@
             <td>${escapeHtml(item.sourceSpuId || '-')}</td>
             <td>${escapeHtml(formatDateTime(item.boundAt))}</td>
           </tr>
-        `).join('') : '<tr><td colspan="5" class="empty">暂无绑定关系</td></tr>';
+        `).join('') : '<tr><td colspan="6" class="empty">暂无绑定关系</td></tr>';
         $('bindingRecordBody').innerHTML = records.length ? records.map((item) => `
           <tr>
             <td>${escapeHtml(formatDateTime(item.boundAt))}</td>
             <td>${escapeHtml(item.userOpenid || '-')}</td>
+            <td>${escapeHtml(item.customerRemarkName || '-')}</td>
             <td>
               <strong>${escapeHtml(item.salesNameSnapshot || '-')}</strong>
               <div class="small">${escapeHtml(item.salesOpenid || '-')}</div>
@@ -580,10 +709,10 @@
             <td>${escapeHtml(item.sourcePage || '-')}</td>
             <td>${escapeHtml(item.sourceSpuId || '-')}</td>
           </tr>
-        `).join('') : '<tr><td colspan="6" class="empty">暂无绑定记录</td></tr>';
+        `).join('') : '<tr><td colspan="7" class="empty">暂无绑定记录</td></tr>';
       } catch (err) {
-        $('bindingBody').innerHTML = `<tr><td colspan="5" class="empty">${escapeHtml(err.message)}</td></tr>`;
-        $('bindingRecordBody').innerHTML = `<tr><td colspan="6" class="empty">${escapeHtml(err.message)}</td></tr>`;
+        $('bindingBody').innerHTML = `<tr><td colspan="6" class="empty">${escapeHtml(err.message)}</td></tr>`;
+        $('bindingRecordBody').innerHTML = `<tr><td colspan="7" class="empty">${escapeHtml(err.message)}</td></tr>`;
         showNotice(err.message, true);
       }
     }
@@ -611,6 +740,23 @@
     }
 
     $('salesBody').addEventListener('click', async (event) => {
+      const editRemarkTarget = event.target.closest('[data-action="edit-remark-name"]');
+      if (editRemarkTarget) {
+        const remarkName = window.prompt('请输入后台管理用的备注名（留空可清除）', editRemarkTarget.dataset.remarkName || '');
+        if (remarkName === null) return;
+        try {
+          await requestJson(`/api/admin/sales/${encodeURIComponent(editRemarkTarget.dataset.openid)}/remark-name`, {
+            method: 'POST',
+            headers: headers(),
+            body: JSON.stringify({ remarkName }),
+          });
+          showNotice('备注名已更新');
+          await loadSales();
+        } catch (err) {
+          showNotice(err.message, true);
+        }
+        return;
+      }
       const showTarget = event.target.closest('[data-action="show-bound-users"]');
       if (showTarget && !showTarget.disabled) {
         await openBoundUsersPopup(
@@ -635,6 +781,27 @@
       }
     });
 
+    $('boundUsersBody').addEventListener('click', (event) => {
+      const remarkTarget = event.target.closest('[data-action="edit-bound-user-remark"]');
+      if (remarkTarget) {
+        editBoundUserRemark(remarkTarget.dataset.userOpenid, remarkTarget.dataset.userName, remarkTarget.dataset.customerRemarkName);
+        return;
+      }
+      const removeTarget = event.target.closest('[data-action="remove-bound-user"]');
+      if (removeTarget) {
+        removeBoundUser(removeTarget.dataset.userOpenid, removeTarget.dataset.userName);
+        return;
+      }
+      const target = event.target.closest('[data-action="reassign-bound-user"]');
+      if (!target) return;
+      openReassignBoundUserModal(target.dataset.userOpenid, target.dataset.userName);
+    });
+    $('reassignSalesList').addEventListener('click', async (event) => {
+      const target = event.target.closest('[data-action="confirm-reassign-bound-user"]');
+      if (!target) return;
+      await reassignBoundUser(target.dataset.salesOpenid, target.dataset.salesName);
+    });
+
     $('refreshSales').addEventListener('click', async () => {
       await Promise.all([loadSales(), loadBindings()]);
       showNotice('销售和绑定数据已刷新');
@@ -648,15 +815,20 @@
     });
     $('closeBoundUsersModal').addEventListener('click', closeBoundUsersModal);
     $('boundUsersConfirmClose').addEventListener('click', closeBoundUsersModal);
+    $('closeReassignBoundUserModal').addEventListener('click', closeReassignBoundUserModal);
+    $('reassignBoundUserCancel').addEventListener('click', closeReassignBoundUserModal);
     $('boundUsersModal').addEventListener('click', (event) => {
       if (event.target === $('boundUsersModal')) {
         closeBoundUsersModal();
       }
     });
+    $('reassignBoundUserModal').addEventListener('click', (event) => {
+      if (event.target === $('reassignBoundUserModal')) closeReassignBoundUserModal();
+    });
     window.addEventListener('keydown', (event) => {
-      if (event.key === 'Escape' && $('boundUsersModal').classList.contains('show')) {
-        closeBoundUsersModal();
-      }
+      if (event.key !== 'Escape') return;
+      if ($('reassignBoundUserModal').classList.contains('show')) return closeReassignBoundUserModal();
+      if ($('boundUsersModal').classList.contains('show')) closeBoundUsersModal();
     });
     $('adminLogout').addEventListener('click', () => {
       clearAuth();

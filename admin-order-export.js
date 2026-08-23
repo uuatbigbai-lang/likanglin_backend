@@ -62,7 +62,7 @@
         下单时间: formatExcelDate(order.createTime || order.createdAt || ''),
         微信交易单号: payment.transactionId || payment.channelTrxNo || payment.traceNo || '',
         商品: goodsText,
-        金额: `${money(order.paymentAmount || order.totalAmount)}\n商品：${money(order.goodsAmount || order.totalAmount)}`,
+        金额: `${money(order.paymentAmount || order.totalAmount)}\n商品：${money(order.goodsAmount || order.totalAmount)}\n快递费：${money(order.freightFee || 0)}`,
         状态: statusText,
         收件信息: `${receiver || '-'}\n${receiverAddress || '-'}`,
         物流: logisticsText,

@@ -93,6 +93,7 @@ const DEFAULT_USER_AVATAR =
 const ORDER_STATUS_RETURNING = 60;
 const ORDER_STATUS_REFUNDED = 70;
 const ORDER_AUTO_CANCEL_MS = Math.max(Number(process.env.ORDER_AUTO_CANCEL_MS) || 30 * 60 * 1000, 60 * 1000);
+const EMPLOYEE_COUPON_FREIGHT_FEE = 1500;
 
 const DEFAULT_COUPON_TEMPLATES = [
   {
@@ -139,11 +140,35 @@ const DEFAULT_COUPON_TEMPLATES = [
     templateType: 'employee_special',
     title: '员工特别优惠',
     ruleType: 'employee_price',
+  value: 0,
+  thresholdAmount: 0,
+  minQuantity: 0,
+  desc: '按商品已配置的员工价结算，仅对配置了员工价的商品生效；使用时加收15元快递费',
+    sort: 10,
+  },
+  {
+    templateType: 'third_gen_16s_experience',
+    title: '第三代16S检测体验券',
+    ruleType: 'experience_price',
     value: 0,
     thresholdAmount: 0,
     minQuantity: 0,
-    desc: '按商品已配置的员工价结算，仅对配置了员工价的商品生效',
-    sort: 10,
+    desc: '第三代肠道菌群检测体验价380元/次，二代肠道与阴道菌群检测体验价280元/次，均包邮。',
+    sort: 60,
+    meta: {
+      experienceShared: true,
+      experiencePriceBySpuId: {
+        spu_probiotic_09: 38000,
+        spu_probiotic_02: 28000,
+        spu_probiotic_05: 28000,
+      },
+      scopeSpuIds: ['spu_probiotic_09', 'spu_probiotic_02', 'spu_probiotic_05'],
+      scopeGoods: [
+        { spuId: 'spu_probiotic_09', title: '第三代肠道菌群检测服务' },
+        { spuId: 'spu_probiotic_02', title: '肠道菌群检测' },
+        { spuId: 'spu_probiotic_05', title: '阴道菌群检测' },
+      ],
+    },
   },
 ];
 
@@ -160,7 +185,9 @@ const normalizeCouponTemplate = (template = {}) => {
         ? `订单可减免${(value / 100).toFixed(2)}元`
         : ruleType === 'buy_x_get_y'
           ? `订单满${minQuantity}件，免除最低价${value || 1}件商品金额`
-          : '按商品员工价自动结算'
+          : ruleType === 'experience_price'
+            ? '指定检测服务享体验价并包邮'
+            : '按商品员工价自动结算'
   );
 
   return {
@@ -244,6 +271,8 @@ const formatCouponRecord = (coupon) => {
     forwarded: '已转发',
   };
   const buyXGetYDesc = `订单内商品每满${template.minQuantity || 3}件，自动减${template.value || 1}件`;
+  const isExperiencePrice = template.ruleType === 'experience_price';
+  const experienceShared = template.meta?.experienceShared !== false;
   return {
     key: data.couponNo,
     couponNo: data.couponNo,
@@ -252,9 +281,9 @@ const formatCouponRecord = (coupon) => {
     status: statusMap[data.status] || 'disabled',
     recordStatus: data.status,
     type: template.ruleType === 'buy_x_get_y' ? 4 : template.ruleType === 'amount' ? 1 : 2,
-    value: template.value || 0,
+    value: isExperiencePrice ? 280 : (template.value || 0),
     base: template.thresholdAmount || 0,
-    valueLabel: template.ruleType === 'employee_price' ? '员工价' : '',
+    valueLabel: template.ruleType === 'employee_price' ? '员工价' : (isExperiencePrice ? '¥280起' : ''),
     unitLabel: template.ruleType === 'employee_price' ? '' : '',
     tag: statusTextMap[data.status] || '已失效',
     statusText: statusTextMap[data.status] || '已失效',
@@ -272,6 +301,7 @@ const formatCouponRecord = (coupon) => {
     usedByOpenid: data.usedByOpenid || '',
     orderNo: data.orderNo || '',
     discountAmount: data.discountAmount || '0',
+    experienceShared,
     scopeSpuIds: getScopedSpuIds(template),
     scopeGoods: getScopedGoodsSummary(template),
     scopeGoodsText: getScopedGoodsSummary(template).map((item) => item.title).join('、'),
@@ -285,7 +315,9 @@ const formatCouponRecord = (coupon) => {
     useNotes: template.ruleType === 'buy_x_get_y'
       ? `订单内商品数量每满${template.minQuantity || 3}件，自动抵扣${template.value || 1}件商品金额；多种商品会一起累计计算。`
       : template.ruleType === 'employee_price'
-        ? '仅对已配置员工价的商品生效，下单时按员工价自动抵扣差额。'
+        ? '仅对已配置员工价的商品生效，下单时按员工价自动抵扣差额，并加收15元快递费。'
+        : isExperiencePrice
+          ? `仅限第三代16S、二代肠道及阴道菌群检测服务；${experienceShared ? '符合条件的每件商品均享体验价。' : '购物车内仅价格最高的一件商品享体验价。'}`
         : getScopedSpuIds(template).length
           ? '仅对指定商品生效，下单时自动按命中的商品金额抵扣。'
           : '下单时自动选择可用优惠券并抵扣。',
@@ -447,6 +479,24 @@ const calculateBuyXGetYDiscount = (template = {}, goodsList = []) => {
   }, 0);
 };
 
+const calculateExperiencePriceDiscount = (template = {}, goodsList = []) => {
+  const priceBySpuId = template.meta?.experiencePriceBySpuId || {};
+  const candidates = goodsList.map((goods) => {
+    const experiencePrice = Math.max(Number(priceBySpuId[String(goods.spuId || '').trim()] || 0), 0);
+    const salePrice = Math.max(Number(goods.price || goods.settlePrice || goods.actualPrice || 0), 0);
+    const quantity = Math.max(Number(goods.quantity || goods.buyQuantity || 1), 0);
+    return { experiencePrice, salePrice, quantity, discount: Math.max(salePrice - experiencePrice, 0) };
+  }).filter((item) => item.quantity > 0 && item.discount > 0);
+
+  if (template.meta?.experienceShared !== false) {
+    return candidates.reduce((sum, item) => sum + item.discount * item.quantity, 0);
+  }
+
+  // 不同享时只优惠购物车中单价最高的一件符合条件商品。
+  const highestPriced = candidates.sort((a, b) => b.salePrice - a.salePrice)[0];
+  return highestPriced ? highestPriced.discount : 0;
+};
+
 const calculateCouponDiscount = (coupon, goodsList = [], totalAmount = 0) => {
   if (!coupon || coupon.status !== 'claimed') return 0;
   const amount = Math.max(Number(totalAmount || 0), 0);
@@ -480,7 +530,27 @@ const calculateCouponDiscount = (coupon, goodsList = [], totalAmount = 0) => {
       return sum + (salePrice - employeePrice) * quantity;
     }, 0);
   }
+  if (template.ruleType === 'experience_price') {
+    return calculateExperiencePriceDiscount(template, eligibleGoodsList);
+  }
   return 0;
+};
+
+const getCouponFreight = (coupon) => {
+  const template = getCouponTemplateSnapshot(coupon);
+  if (template.templateType !== 'employee_special') {
+    return { amount: 0, snapshot: null };
+  }
+  return {
+    amount: EMPLOYEE_COUPON_FREIGHT_FEE,
+    snapshot: {
+      ruleType: 'employee_coupon_freight',
+      title: '员工优惠快递费',
+      amount: String(EMPLOYEE_COUPON_FREIGHT_FEE),
+      couponNo: coupon.couponNo,
+      couponTemplateType: template.templateType,
+    },
+  };
 };
 
 const getCouponUnavailableReason = (coupon, goodsList = []) => {
@@ -500,6 +570,11 @@ const getCouponUnavailableReason = (coupon, goodsList = []) => {
       return employeePrice > 0 && employeePrice < salePrice;
     });
     if (!hasEmployeeGoods) return `${template.title}仅对已配置员工价的商品可用`;
+  }
+  if (template.ruleType === 'experience_price') {
+    if (!calculateExperiencePriceDiscount(template, eligibleGoodsList)) {
+      return `${template.title}仅限第三代16S、二代肠道或阴道菌群检测服务使用`;
+    }
   }
   if (template.ruleType === 'buy_x_get_y') {
     const eligibleTotalQuantity = eligibleGoodsList.reduce(
@@ -639,6 +714,7 @@ const formatSalesProfile = (profile, stats = {}) => {
   const data = typeof profile.toJSON === 'function' ? profile.toJSON() : profile;
   return {
     openid: data.openid || '',
+    remarkName: data.remarkName || '',
     salesName: getSalesDisplayName(data),
     userNickName: data.userNickName || '',
     remark: data.remark || '',
@@ -719,6 +795,7 @@ const mergeBindingStatsIntoSalesStatsMap = (statsMap, bindings = []) => {
 
 const buildCurrentBindingMap = (bindings = [], bindingRecords = []) => {
   const map = new Map();
+  const unboundUserOpenids = new Set();
 
   bindings.forEach((binding) => {
     const data = typeof binding?.toJSON === 'function' ? binding.toJSON() : binding;
@@ -728,6 +805,7 @@ const buildCurrentBindingMap = (bindings = [], bindingRecords = []) => {
       userOpenid,
       salesOpenid: String(data?.salesOpenid || '').trim(),
       salesNameSnapshot: String(data?.salesNameSnapshot || '').trim(),
+      customerRemarkName: String(data?.customerRemarkName || '').trim(),
       sourcePage: String(data?.sourcePage || '').trim(),
       sourcePath: String(data?.sourcePath || '').trim(),
       sourceSpuId: String(data?.sourceSpuId || '').trim(),
@@ -740,11 +818,16 @@ const buildCurrentBindingMap = (bindings = [], bindingRecords = []) => {
   bindingRecords.forEach((record) => {
     const data = typeof record?.toJSON === 'function' ? record.toJSON() : record;
     const userOpenid = String(data?.userOpenid || '').trim();
-    if (!userOpenid || map.has(userOpenid)) return;
+    if (!userOpenid || map.has(userOpenid) || unboundUserOpenids.has(userOpenid)) return;
+    if (data?.bindingStatus === 'unbound') {
+      unboundUserOpenids.add(userOpenid);
+      return;
+    }
     map.set(userOpenid, {
       userOpenid,
       salesOpenid: String(data?.salesOpenid || '').trim(),
       salesNameSnapshot: String(data?.salesNameSnapshot || '').trim(),
+      customerRemarkName: String(data?.customerRemarkName || '').trim(),
       sourcePage: String(data?.sourcePage || '').trim(),
       sourcePath: String(data?.sourcePath || '').trim(),
       sourceSpuId: String(data?.sourceSpuId || '').trim(),
@@ -820,6 +903,7 @@ const buildBoundUsersForSales = async (salesOpenid) => {
       nickName: String(user.nickName || '').trim(),
       userName: latestUserNameMap.get(userOpenid) || '',
       phoneNumber: String(user.phoneNumber || '').trim(),
+      customerRemarkName: String(binding.customerRemarkName || '').trim(),
       boundAt: binding.boundAt || null,
       createdAt: user.createdAt || null,
       updatedAt: user.updatedAt || null,
@@ -834,6 +918,7 @@ const formatUserSalesBinding = (binding) => {
     userOpenid: data.userOpenid || '',
     salesOpenid: data.salesOpenid || '',
     salesNameSnapshot: data.salesNameSnapshot || '',
+    customerRemarkName: data.customerRemarkName || '',
     sourcePage: data.sourcePage || '',
     sourcePath: data.sourcePath || '',
     sourceSpuId: data.sourceSpuId || '',
@@ -850,8 +935,10 @@ const formatUserSalesBindingRecord = (record) => {
     userOpenid: data.userOpenid || '',
     salesOpenid: data.salesOpenid || '',
     salesNameSnapshot: data.salesNameSnapshot || '',
+    customerRemarkName: data.customerRemarkName || '',
     previousSalesOpenid: data.previousSalesOpenid || '',
     previousSalesNameSnapshot: data.previousSalesNameSnapshot || '',
+    bindingStatus: data.bindingStatus || 'bound',
     sourcePage: data.sourcePage || '',
     sourcePath: data.sourcePath || '',
     sourceSpuId: data.sourceSpuId || '',
@@ -903,6 +990,7 @@ const bindSalesForUser = async ({
   sourcePage = '',
   sourcePath = '',
   sourceSpuId = '',
+  customerRemarkName = null,
 }) => {
   const normalizedUserOpenid = String(userOpenid || '').trim();
   const normalizedSalesOpenid = String(salesOpenid || '').trim();
@@ -922,11 +1010,18 @@ const bindSalesForUser = async ({
   const now = new Date();
   const existing = await UserSalesBinding.findOne({ where: { userOpenid: normalizedUserOpenid } });
   const previousInfo = existing ? formatUserSalesBinding(existing) : null;
+  const preservedRemarkName = previousInfo?.salesOpenid === normalizedSalesOpenid
+    ? previousInfo.customerRemarkName
+    : '';
+  const normalizedCustomerRemarkName = customerRemarkName === null
+    ? preservedRemarkName
+    : String(customerRemarkName || '').trim();
 
   await UserSalesBinding.upsert({
     userOpenid: normalizedUserOpenid,
     salesOpenid: normalizedSalesOpenid,
     salesNameSnapshot: salesName,
+    customerRemarkName: normalizedCustomerRemarkName,
     sourcePage: String(sourcePage || '').trim(),
     sourcePath: String(sourcePath || '').trim(),
     sourceSpuId: String(sourceSpuId || '').trim(),
@@ -937,8 +1032,10 @@ const bindSalesForUser = async ({
     userOpenid: normalizedUserOpenid,
     salesOpenid: normalizedSalesOpenid,
     salesNameSnapshot: salesName,
+    customerRemarkName: normalizedCustomerRemarkName,
     previousSalesOpenid: previousInfo?.salesOpenid || null,
     previousSalesNameSnapshot: previousInfo?.salesNameSnapshot || '',
+    bindingStatus: 'bound',
     sourcePage: String(sourcePage || '').trim(),
     sourcePath: String(sourcePath || '').trim(),
     sourceSpuId: String(sourceSpuId || '').trim(),
@@ -949,6 +1046,7 @@ const bindSalesForUser = async ({
     bound: true,
     salesOpenid: normalizedSalesOpenid,
     salesName,
+    customerRemarkName: normalizedCustomerRemarkName,
     previousSalesOpenid: previousInfo?.salesOpenid || '',
     previousSalesName: previousInfo?.salesNameSnapshot || '',
     boundAt: now,
@@ -1121,7 +1219,8 @@ const formatOrderForMiniProgram = (order, afterSales = []) => {
     goodsAmount: String(data.totalAmount || '0'),
     goodsAmountApp: String(data.totalAmount || '0'),
     paymentAmount: String(data.paymentAmount || data.totalAmount || '0'),
-    freightFee: '0',
+    freightFee: String(data.freightFee || '0'),
+    freightSnapshot: data.freightSnapshot || null,
     packageFee: '0',
     discountAmount: String(data.couponAmount || '0'),
     channelType: 0,
@@ -1161,7 +1260,7 @@ const formatOrderForMiniProgram = (order, afterSales = []) => {
         tagText: goods.tagText || null,
         outCode: null,
         labelVOs: null,
-        buttonVOs: !hasActiveAfterSale && Number(data.orderStatus) === 50
+        buttonVOs: !hasActiveAfterSale && [10, 50].includes(Number(data.orderStatus))
           ? [{ primary: false, type: 4, name: '申请售后' }]
           : [],
       };
@@ -2382,6 +2481,12 @@ app.post('/api/coupon/admin/create', async (req, res) => {
         ...template,
         scopeSpuIds,
         scopeGoods,
+        meta: {
+          ...(template.meta || {}),
+          ...(template.ruleType === 'experience_price'
+            ? { experienceShared: req.body?.experienceShared !== false }
+            : {}),
+        },
       },
     });
 
@@ -2873,6 +2978,117 @@ app.get('/api/admin/sales/bindings', adminAuth, async (req, res) => {
   }
 });
 
+// 后台手动调整客户所属销售；复用统一绑定逻辑，保留原销售和换绑记录。
+app.post('/api/admin/sales/bindings/reassign', adminAuth, async (req, res) => {
+  try {
+    const userOpenid = String(req.body?.userOpenid || '').trim();
+    const salesOpenid = String(req.body?.salesOpenid || '').trim();
+    if (!userOpenid || !salesOpenid) {
+      return res.send({ code: -1, message: '请选择客户和目标销售' });
+    }
+
+    const user = await User.findOne({ where: { openid: userOpenid } });
+    if (!user) return res.send({ code: -1, message: '客户不存在' });
+
+    const currentBinding = await UserSalesBinding.findOne({ where: { userOpenid } });
+    if (currentBinding && String(currentBinding.salesOpenid || '') === salesOpenid) {
+      return res.send({ code: -1, message: '该客户已绑定到所选销售名下' });
+    }
+
+    const result = await bindSalesForUser({
+      userOpenid,
+      salesOpenid,
+      sourcePage: 'admin-sales',
+      sourcePath: '/admin/sales',
+      sourceSpuId: '',
+    });
+    if (!result.bound) return res.send({ code: -1, message: '客户绑定失败' });
+
+    res.send({ code: 0, data: result });
+  } catch (err) {
+    res.send({ code: -1, message: err.message });
+  }
+});
+
+app.delete('/api/admin/sales/bindings/:userOpenid', adminAuth, async (req, res) => {
+  try {
+    const userOpenid = String(req.params.userOpenid || '').trim();
+    if (!userOpenid) return res.send({ code: -1, message: '缺少客户 openid' });
+
+    const binding = await UserSalesBinding.findOne({ where: { userOpenid } });
+    if (!binding) return res.send({ code: -1, message: '该客户当前没有销售绑定关系' });
+    const data = typeof binding.toJSON === 'function' ? binding.toJSON() : binding;
+
+    await UserSalesBinding.sequelize.transaction(async (transaction) => {
+      await binding.destroy({ transaction });
+      await UserSalesBindingRecord.create({
+        userOpenid,
+        salesOpenid: data.salesOpenid,
+        salesNameSnapshot: data.salesNameSnapshot || '',
+        customerRemarkName: data.customerRemarkName || '',
+        previousSalesOpenid: data.salesOpenid,
+        previousSalesNameSnapshot: data.salesNameSnapshot || '',
+        bindingStatus: 'unbound',
+        sourcePage: 'admin-sales',
+        sourcePath: '/admin/sales',
+        sourceSpuId: '',
+        boundAt: new Date(),
+      }, { transaction });
+    });
+
+    res.send({ code: 0, data: { userOpenid } });
+  } catch (err) {
+    res.send({ code: -1, message: err.message });
+  }
+});
+
+app.post('/api/admin/sales/bindings/:userOpenid/customer-remark-name', adminAuth, async (req, res) => {
+  try {
+    const userOpenid = String(req.params.userOpenid || '').trim();
+    const customerRemarkName = String(req.body?.customerRemarkName || '').trim();
+    if (!userOpenid) return res.send({ code: -1, message: '缺少客户 openid' });
+    if (customerRemarkName.length > 80) return res.send({ code: -1, message: '客户备注名不能超过80个字符' });
+
+    const binding = await UserSalesBinding.findOne({ where: { userOpenid } });
+    if (!binding) return res.send({ code: -1, message: '该客户当前没有销售绑定关系' });
+    const data = typeof binding.toJSON === 'function' ? binding.toJSON() : binding;
+    await UserSalesBinding.sequelize.transaction(async (transaction) => {
+      await binding.update({ customerRemarkName }, { transaction });
+      await UserSalesBindingRecord.create({
+        userOpenid,
+        salesOpenid: data.salesOpenid,
+        salesNameSnapshot: data.salesNameSnapshot || '',
+        customerRemarkName,
+        previousSalesOpenid: data.salesOpenid,
+        previousSalesNameSnapshot: data.salesNameSnapshot || '',
+        bindingStatus: 'bound',
+        sourcePage: 'admin-sales',
+        sourcePath: '/admin/sales',
+        sourceSpuId: data.sourceSpuId || '',
+        boundAt: new Date(),
+      }, { transaction });
+    });
+    res.send({ code: 0, data: formatUserSalesBinding(binding) });
+  } catch (err) {
+    res.send({ code: -1, message: err.message });
+  }
+});
+
+app.post('/api/admin/sales/:openid/remark-name', adminAuth, async (req, res) => {
+  try {
+    const openid = String(req.params.openid || '').trim();
+    const remarkName = String(req.body?.remarkName || '').trim();
+    if (remarkName.length > 80) return res.send({ code: -1, message: '备注名不能超过80个字符' });
+
+    const salesProfile = await SalesProfile.findOne({ where: { openid } });
+    if (!salesProfile) return res.send({ code: -1, message: '销售不存在' });
+    await salesProfile.update({ remarkName });
+    res.send({ code: 0, data: formatSalesProfile(salesProfile) });
+  } catch (err) {
+    res.send({ code: -1, message: err.message });
+  }
+});
+
 app.get('/api/admin/latest-users', adminAuth, async (req, res) => {
   try {
     const users = await User.findAll({
@@ -2939,6 +3155,8 @@ app.post('/api/admin/sales', adminAuth, async (req, res) => {
   try {
     const openid = String(req.body?.openid || '').trim();
     const salesName = String(req.body?.salesName || '').trim();
+    const hasRemarkName = Object.prototype.hasOwnProperty.call(req.body || {}, 'remarkName');
+    const remarkName = String(req.body?.remarkName || '').trim();
     const remark = String(req.body?.remark || '').trim();
     if (!openid) return res.send({ code: -1, message: '请填写 openid' });
 
@@ -2948,10 +3166,12 @@ app.post('/api/admin/sales', adminAuth, async (req, res) => {
     }
 
     const finalSalesName = salesName || String(user.nickName || '').trim() || buildDefaultNickName(openid);
+    const existingSalesProfile = await SalesProfile.findOne({ where: { openid } });
     await SalesProfile.upsert({
       openid,
       salesName: finalSalesName,
       userNickName: String(user.nickName || '').trim(),
+      remarkName: hasRemarkName ? remarkName : (existingSalesProfile?.remarkName || ''),
       remark,
     });
 
@@ -3117,6 +3337,7 @@ app.get('/api/products', async (req, res) => {
   try {
     const keyword = String(req.query.keyword || req.query.keywords || '').trim();
     const where = { status: 1 };
+    const isForAudit = Object.prototype.hasOwnProperty.call(process.env, 'forAudit');
 
     if (keyword) {
       where[Op.or] = [
@@ -3127,7 +3348,7 @@ app.get('/api/products', async (req, res) => {
       ];
     }
 
-    const products = await Product.findAll({
+    const findOptions = {
       where,
       order: [
         ['sort', 'DESC'],
@@ -3149,7 +3370,10 @@ app.get('/api/products', async (req, res) => {
         'usePicture',
         'pictureSpuId',
       ],
-    });
+    };
+    if (isForAudit) findOptions.limit = 3;
+
+    const products = await Product.findAll(findOptions);
     const data = products.map(withCloudProductPictures);
     res.send({ code: 0, data });
   } catch (err) {
@@ -3417,6 +3641,38 @@ app.post('/api/products/seed', async (req, res) => {
         },
       ],
     };
+     const prod9 = {
+      spuId: 'spu_probiotic_09',
+      title: '第三代肠道16S检测',
+      brief: '',
+      price: 1298,
+      badge: '',
+      useThumb: true,
+      bannerLength: 1,
+      detailPicLength: 1,
+      sort: 30,
+      minSalePrice: 129800,
+      maxSalePrice: 129800,
+      soldNum: 98,
+      spuStockQuantity: 99999,
+      isPutOnSale: 1,
+      specList: [
+      ],
+      skuList: [
+        {
+          skuId: 'spu_probiotic_09_sku1',
+          pictureSkuId: 'sku1',
+          usePicture: true,
+          specInfo: [
+            
+          ],
+          priceInfo: [
+            { priceType: 1, price: '129800' },
+          ],
+          stockInfo: { stockQuantity: 9999, safeStockQuantity: 0, soldQuantity: 0 },
+        },
+      ],
+    };
     const prod8 = {
       spuId: 'spu_probiotic_08',
       title: '肠道菌群检测套装',
@@ -3452,13 +3708,14 @@ app.post('/api/products/seed', async (req, res) => {
 
     const seedData = [
       prod1,
-      prod6,
       prod2,
       prod3,
       prod4,
-      prod7,
       prod5,
+      prod6,
+      prod7,
       prod8,
+      prod9
     ];
 
 
@@ -3834,7 +4091,8 @@ app.post('/api/order/settle', async (req, res) => {
       ? (couponCandidates.find((item) => item.amount > 0) || null)
       : (couponCandidates.find((item) => item.amount > 0) || null);
     const totalCouponAmount = selectedCoupon ? selectedCoupon.amount : 0;
-    const totalPayAmount = Math.max(totalSalePrice - totalCouponAmount, 1);
+    const freight = selectedCoupon ? getCouponFreight(selectedCoupon.coupon) : { amount: 0, snapshot: null };
+    const totalPayAmount = Math.max(totalSalePrice - totalCouponAmount + freight.amount, 1);
     const settleCouponList = couponCandidates.map(({ coupon, amount }) => {
       const formatted = formatCouponRecord(coupon);
       const isUsable = amount > 0;
@@ -3860,7 +4118,8 @@ app.post('/api/order/settle', async (req, res) => {
         totalDiscountAmount: 0,
         totalPromotionAmount: 0,
         totalCouponAmount,
-        totalDeliveryFee: 0,
+        totalDeliveryFee: freight.amount,
+        freightSnapshot: freight.snapshot,
         invoiceSupport: 0,
         salesOpenid: boundSales?.salesOpenid || '',
         salesNameSnapshot: boundSales?.salesName || '',
@@ -4780,8 +5039,8 @@ app.post('/api/admin/order/return', adminAuth, async (req, res) => {
     if (!order) return res.send({ code: -1, message: '订单不存在' });
 
     const currentStatus = Number(order.orderStatus);
-    if (![40, 50, ORDER_STATUS_RETURNING].includes(currentStatus)) {
-      return res.send({ code: -1, message: '只有待收货或交易完成订单可以进入退货中' });
+    if (![10, 40, 50, ORDER_STATUS_RETURNING].includes(currentStatus)) {
+      return res.send({ code: -1, message: '只有待发货、待收货或交易完成订单可以进入退货中' });
     }
 
     if (currentStatus !== ORDER_STATUS_RETURNING) {
@@ -4940,7 +5199,8 @@ app.post('/api/order/create', async (req, res) => {
       }))
       .find((item) => item.amount > 0);
     const couponAmount = selectedCoupon ? selectedCoupon.amount : 0;
-    const paymentAmount = Math.max(calcTotal - couponAmount, 1);
+    const freight = selectedCoupon ? getCouponFreight(selectedCoupon.coupon) : { amount: 0, snapshot: null };
+    const paymentAmount = Math.max(calcTotal - couponAmount + freight.amount, 1);
     const couponSnapshot = selectedCoupon
       ? { ...formatCouponRecord(selectedCoupon.coupon), discountAmount: String(couponAmount) }
       : null;
@@ -4957,6 +5217,8 @@ app.post('/api/order/create', async (req, res) => {
       orderStatusName: '待付款',
       totalAmount: String(calcTotal),
       paymentAmount: String(paymentAmount),
+      freightFee: String(freight.amount),
+      freightSnapshot: freight.snapshot,
       couponNo: selectedCoupon ? selectedCoupon.coupon.couponNo : null,
       couponAmount: String(couponAmount),
       couponSnapshot,
@@ -5005,6 +5267,8 @@ app.post('/api/order/create', async (req, res) => {
         out_trade_no: order.orderNo,
         totalAmount: order.totalAmount,
         paymentAmount: order.paymentAmount,
+        freightFee: order.freightFee,
+        freightSnapshot: order.freightSnapshot,
         couponNo: order.couponNo,
         couponAmount: order.couponAmount,
         couponSnapshot: order.couponSnapshot,

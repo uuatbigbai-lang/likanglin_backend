@@ -854,7 +854,7 @@
         const payment = order.paymentVO || {};
         const isPendingDelivery = Number(order.orderStatus) === 10;
         const isPendingPay = Number(order.orderStatus) === 5;
-        const canStartReturn = [40, 50].includes(Number(order.orderStatus));
+        const canStartReturn = [10, 40, 50].includes(Number(order.orderStatus));
         const canRefund = Number(order.orderStatus) === 60;
         const canCancelReturn = Number(order.orderStatus) === 60;
         const canDelete = [50, 70].includes(Number(order.orderStatus));
@@ -882,6 +882,7 @@
             <td>
               <strong>${money(order.paymentAmount || order.totalAmount)}</strong>
               <div class="small">商品：${money(order.goodsAmount || order.totalAmount)}</div>
+              <div class="small">快递费：${money(order.freightFee || 0)}</div>
             </td>
             <td>
               <span class="badge ${orderStatusClass(order)}">${escapeHtml(order.orderStatusName || '-')}</span>
