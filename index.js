@@ -807,7 +807,8 @@ const formatSalesProfile = (profile, stats = {}) => {
   const data = typeof profile.toJSON === 'function' ? profile.toJSON() : profile;
   return {
     openid: data.openid || '',
-    remarkName: data.remarkName || '',
+    // 备注统一归属于用户 openid，而不是销售身份档案。
+    remarkName: stats.userRemarkName || '',
     salesName: getSalesDisplayName(data),
     userNickName: data.userNickName || '',
     remark: data.remark || '',
@@ -818,6 +819,16 @@ const formatSalesProfile = (profile, stats = {}) => {
     createdAt: data.createdAt,
     updatedAt: data.updatedAt,
   };
+};
+
+const getUserRemarkNameMap = async (openids = []) => {
+  const normalizedOpenids = Array.from(new Set(openids.map((item) => String(item || '').trim()).filter(Boolean)));
+  if (!normalizedOpenids.length) return new Map();
+  const users = await User.findAll({
+    attributes: ['openid', 'remarkName'],
+    where: { openid: { [Op.in]: normalizedOpenids } },
+  });
+  return new Map(users.map((user) => [String(user.openid || '').trim(), String(user.remarkName || '').trim()]));
 };
 
 const buildSalesProfileWithStats = async (salesProfileOrOpenid) => {
@@ -839,7 +850,8 @@ const buildSalesProfileWithStats = async (salesProfileOrOpenid) => {
   const { currentBindingMap } = await buildCurrentBindingsFromSources();
   const bindings = Array.from(currentBindingMap.values()).filter((item) => item.salesOpenid === profileOpenid);
   const statsMap = mergeBindingStatsIntoSalesStatsMap(buildSalesStatsMap(orders), bindings);
-  return formatSalesProfile(profile, statsMap.get(profileOpenid));
+  const remarkNameMap = await getUserRemarkNameMap([profileOpenid]);
+  return formatSalesProfile(profile, { ...statsMap.get(profileOpenid), userRemarkName: remarkNameMap.get(profileOpenid) || '' });
 };
 
 const buildSalesStatsMap = (orders = []) => {
@@ -960,7 +972,7 @@ const buildBoundUsersForSales = async (salesOpenid) => {
   const userOpenids = Array.from(new Set(bindings.map((item) => String(item.userOpenid || '').trim()).filter(Boolean)));
   const [users, orders] = await Promise.all([
     User.findAll({
-      attributes: ['openid', 'nickName', 'phoneNumber', 'createdAt', 'updatedAt'],
+      attributes: ['openid', 'nickName', 'phoneNumber', 'remarkName', 'createdAt', 'updatedAt'],
       where: { openid: { [Op.in]: userOpenids } },
     }),
     Order.findAll({
@@ -996,7 +1008,7 @@ const buildBoundUsersForSales = async (salesOpenid) => {
       nickName: String(user.nickName || '').trim(),
       userName: latestUserNameMap.get(userOpenid) || '',
       phoneNumber: String(user.phoneNumber || '').trim(),
-      customerRemarkName: String(binding.customerRemarkName || '').trim(),
+      customerRemarkName: String(user.remarkName || '').trim(),
       boundAt: binding.boundAt || null,
       createdAt: user.createdAt || null,
       updatedAt: user.updatedAt || null,
@@ -1083,7 +1095,6 @@ const bindSalesForUser = async ({
   sourcePage = '',
   sourcePath = '',
   sourceSpuId = '',
-  customerRemarkName = null,
 }) => {
   const normalizedUserOpenid = String(userOpenid || '').trim();
   const normalizedSalesOpenid = String(salesOpenid || '').trim();
@@ -1103,18 +1114,10 @@ const bindSalesForUser = async ({
   const now = new Date();
   const existing = await UserSalesBinding.findOne({ where: { userOpenid: normalizedUserOpenid } });
   const previousInfo = existing ? formatUserSalesBinding(existing) : null;
-  const preservedRemarkName = previousInfo?.salesOpenid === normalizedSalesOpenid
-    ? previousInfo.customerRemarkName
-    : '';
-  const normalizedCustomerRemarkName = customerRemarkName === null
-    ? preservedRemarkName
-    : String(customerRemarkName || '').trim();
-
   await UserSalesBinding.upsert({
     userOpenid: normalizedUserOpenid,
     salesOpenid: normalizedSalesOpenid,
     salesNameSnapshot: salesName,
-    customerRemarkName: normalizedCustomerRemarkName,
     sourcePage: String(sourcePage || '').trim(),
     sourcePath: String(sourcePath || '').trim(),
     sourceSpuId: String(sourceSpuId || '').trim(),
@@ -1125,7 +1128,6 @@ const bindSalesForUser = async ({
     userOpenid: normalizedUserOpenid,
     salesOpenid: normalizedSalesOpenid,
     salesNameSnapshot: salesName,
-    customerRemarkName: normalizedCustomerRemarkName,
     previousSalesOpenid: previousInfo?.salesOpenid || null,
     previousSalesNameSnapshot: previousInfo?.salesNameSnapshot || '',
     bindingStatus: 'bound',
@@ -1139,7 +1141,6 @@ const bindSalesForUser = async ({
     bound: true,
     salesOpenid: normalizedSalesOpenid,
     salesName,
-    customerRemarkName: normalizedCustomerRemarkName,
     previousSalesOpenid: previousInfo?.salesOpenid || '',
     previousSalesName: previousInfo?.salesNameSnapshot || '',
     boundAt: now,
@@ -2987,20 +2988,23 @@ app.get('/api/admin/coupon-admins', adminAuth, async (req, res) => {
 
 app.get('/api/admin/sales', adminAuth, async (req, res) => {
   try {
-    const salesProfiles = await SalesProfile.findAll({ order: [['createdAt', 'DESC']] });
-    const orders = await Order.findAll({
+    const [salesProfiles, orders] = await Promise.all([SalesProfile.findAll({ order: [['createdAt', 'DESC']] }), Order.findAll({
       attributes: ['salesOpenid', 'paymentAmount', 'totalAmount', 'goodsList'],
       where: {
         salesOpenid: { [Op.ne]: null },
         orderStatus: { [Op.in]: [10, 40, 50, ORDER_STATUS_RETURNING] },
       },
-    });
+    })]);
     const { currentBindingMap } = await buildCurrentBindingsFromSources();
     const bindings = Array.from(currentBindingMap.values());
     const statsMap = mergeBindingStatsIntoSalesStatsMap(buildSalesStatsMap(orders), bindings);
+    const remarkNameMap = await getUserRemarkNameMap(salesProfiles.map((profile) => profile.openid));
     res.send({
       code: 0,
-      data: salesProfiles.map((profile) => formatSalesProfile(profile, statsMap.get(profile.openid))),
+      data: salesProfiles.map((profile) => formatSalesProfile(profile, {
+        ...statsMap.get(profile.openid),
+        userRemarkName: remarkNameMap.get(profile.openid) || '',
+      })),
     });
   } catch (err) {
     res.send({ code: -1, message: err.message });
@@ -3030,11 +3034,21 @@ app.get('/api/admin/sales/bindings', adminAuth, async (req, res) => {
     const bindings = Array.from(currentBindingMap.values())
       .sort((left, right) => new Date(right.boundAt || 0).getTime() - new Date(left.boundAt || 0).getTime());
     const records = bindingRecords.slice(0, 200);
+    const remarkNameMap = await getUserRemarkNameMap([
+      ...bindings.map((item) => item.userOpenid),
+      ...records.map((item) => item.userOpenid),
+    ]);
     res.send({
       code: 0,
       data: {
-        bindings: bindings.map(formatUserSalesBinding),
-        records: records.map(formatUserSalesBindingRecord),
+        bindings: bindings.map((item) => ({
+          ...formatUserSalesBinding(item),
+          customerRemarkName: remarkNameMap.get(String(item.userOpenid || '').trim()) || '',
+        })),
+        records: records.map((item) => ({
+          ...formatUserSalesBindingRecord(item),
+          customerRemarkName: remarkNameMap.get(String(item.userOpenid || '').trim()) || '',
+        })),
       },
     });
   } catch (err) {
@@ -3045,12 +3059,15 @@ app.get('/api/admin/sales/bindings', adminAuth, async (req, res) => {
 app.get('/api/admin/customers', adminAuth, async (req, res) => {
   try {
     const [users, salesProfiles, couponAdmins, bindingSources] = await Promise.all([
-      User.findAll({ attributes: ['openid', 'nickName', 'phoneNumber', 'adminRemarkName'], order: [['createdAt', 'DESC']] }),
+      User.findAll({ attributes: ['openid', 'nickName', 'phoneNumber', 'remarkName'], order: [['createdAt', 'DESC']] }),
       SalesProfile.findAll(),
       AdminWhitelist.findAll({ attributes: ['openid'] }),
       buildCurrentBindingsFromSources(),
     ]);
-    const salesMap = new Map(salesProfiles.map((item) => [item.openid, formatSalesProfile(item)]));
+    const salesRemarkNameMap = await getUserRemarkNameMap(salesProfiles.map((item) => item.openid));
+    const salesMap = new Map(salesProfiles.map((item) => [item.openid, formatSalesProfile(item, {
+      userRemarkName: salesRemarkNameMap.get(item.openid) || '',
+    })]));
     const adminOpenids = new Set(couponAdmins.map((item) => item.openid));
     res.send({ code: 0, data: users.map((user) => {
       const data = typeof user.toJSON === 'function' ? user.toJSON() : user;
@@ -3060,7 +3077,7 @@ app.get('/api/admin/customers', adminAuth, async (req, res) => {
         openid: data.openid,
         nickName: data.nickName || '',
         phoneNumber: data.phoneNumber || '',
-        customerRemarkName: data.adminRemarkName || binding?.customerRemarkName || '',
+        customerRemarkName: data.remarkName || '',
         salesOpenid: binding?.salesOpenid || '',
         salesName: sales?.remarkName || sales?.salesName || binding?.salesNameSnapshot || '',
         isSales: salesMap.has(data.openid),
@@ -3073,14 +3090,14 @@ app.get('/api/admin/customers', adminAuth, async (req, res) => {
 app.post('/api/admin/customers/:openid/remark-name', adminAuth, async (req, res) => {
   try {
     const openid = String(req.params.openid || '').trim();
-    const adminRemarkName = String(req.body?.adminRemarkName || '').trim();
+    const remarkName = String(req.body?.remarkName ?? req.body?.adminRemarkName ?? '').trim();
     if (!openid) return res.send({ code: -1, message: '缺少客户 openid' });
-    if (adminRemarkName.length > 80) return res.send({ code: -1, message: '客户备注名不能超过80个字符' });
+    if (remarkName.length > 80) return res.send({ code: -1, message: '客户备注名不能超过80个字符' });
 
     const user = await User.findOne({ where: { openid } });
     if (!user) return res.send({ code: -1, message: '客户不存在' });
-    await user.update({ adminRemarkName });
-    res.send({ code: 0, data: { openid, adminRemarkName } });
+    await user.update({ remarkName });
+    res.send({ code: 0, data: { openid, remarkName } });
   } catch (err) {
     res.send({ code: -1, message: err.message });
   }
@@ -3133,7 +3150,6 @@ app.delete('/api/admin/sales/bindings/:userOpenid', adminAuth, async (req, res) 
         userOpenid,
         salesOpenid: data.salesOpenid,
         salesNameSnapshot: data.salesNameSnapshot || '',
-        customerRemarkName: data.customerRemarkName || '',
         previousSalesOpenid: data.salesOpenid,
         previousSalesNameSnapshot: data.salesNameSnapshot || '',
         bindingStatus: 'unbound',
@@ -3153,30 +3169,14 @@ app.delete('/api/admin/sales/bindings/:userOpenid', adminAuth, async (req, res) 
 app.post('/api/admin/sales/bindings/:userOpenid/customer-remark-name', adminAuth, async (req, res) => {
   try {
     const userOpenid = String(req.params.userOpenid || '').trim();
-    const customerRemarkName = String(req.body?.customerRemarkName || '').trim();
+    const remarkName = String(req.body?.remarkName ?? req.body?.customerRemarkName ?? '').trim();
     if (!userOpenid) return res.send({ code: -1, message: '缺少客户 openid' });
-    if (customerRemarkName.length > 80) return res.send({ code: -1, message: '客户备注名不能超过80个字符' });
+    if (remarkName.length > 80) return res.send({ code: -1, message: '客户备注名不能超过80个字符' });
 
-    const binding = await UserSalesBinding.findOne({ where: { userOpenid } });
-    if (!binding) return res.send({ code: -1, message: '该客户当前没有销售绑定关系' });
-    const data = typeof binding.toJSON === 'function' ? binding.toJSON() : binding;
-    await UserSalesBinding.sequelize.transaction(async (transaction) => {
-      await binding.update({ customerRemarkName }, { transaction });
-      await UserSalesBindingRecord.create({
-        userOpenid,
-        salesOpenid: data.salesOpenid,
-        salesNameSnapshot: data.salesNameSnapshot || '',
-        customerRemarkName,
-        previousSalesOpenid: data.salesOpenid,
-        previousSalesNameSnapshot: data.salesNameSnapshot || '',
-        bindingStatus: 'bound',
-        sourcePage: 'admin-sales',
-        sourcePath: '/admin/sales',
-        sourceSpuId: data.sourceSpuId || '',
-        boundAt: new Date(),
-      }, { transaction });
-    });
-    res.send({ code: 0, data: formatUserSalesBinding(binding) });
+    const user = await User.findOne({ where: { openid: userOpenid } });
+    if (!user) return res.send({ code: -1, message: '客户不存在' });
+    await user.update({ remarkName });
+    res.send({ code: 0, data: { openid: userOpenid, remarkName } });
   } catch (err) {
     res.send({ code: -1, message: err.message });
   }
@@ -3188,10 +3188,13 @@ app.post('/api/admin/sales/:openid/remark-name', adminAuth, async (req, res) => 
     const remarkName = String(req.body?.remarkName || '').trim();
     if (remarkName.length > 80) return res.send({ code: -1, message: '备注名不能超过80个字符' });
 
-    const salesProfile = await SalesProfile.findOne({ where: { openid } });
-    if (!salesProfile) return res.send({ code: -1, message: '销售不存在' });
-    await salesProfile.update({ remarkName });
-    res.send({ code: 0, data: formatSalesProfile(salesProfile) });
+    const [salesProfile, user] = await Promise.all([
+      SalesProfile.findOne({ where: { openid } }),
+      User.findOne({ where: { openid } }),
+    ]);
+    if (!salesProfile || !user) return res.send({ code: -1, message: '销售不存在' });
+    await user.update({ remarkName });
+    res.send({ code: 0, data: formatSalesProfile(salesProfile, { userRemarkName: remarkName }) });
   } catch (err) {
     res.send({ code: -1, message: err.message });
   }
@@ -3263,7 +3266,6 @@ app.post('/api/admin/sales', adminAuth, async (req, res) => {
   try {
     const openid = String(req.body?.openid || '').trim();
     const salesName = String(req.body?.salesName || '').trim();
-    const hasRemarkName = Object.prototype.hasOwnProperty.call(req.body || {}, 'remarkName');
     const remarkName = String(req.body?.remarkName || '').trim();
     const remark = String(req.body?.remark || '').trim();
     if (!openid) return res.send({ code: -1, message: '请填写 openid' });
@@ -3274,14 +3276,17 @@ app.post('/api/admin/sales', adminAuth, async (req, res) => {
     }
 
     const finalSalesName = salesName || String(user.nickName || '').trim() || buildDefaultNickName(openid);
-    const existingSalesProfile = await SalesProfile.findOne({ where: { openid } });
+    if (remarkName.length > 80) return res.send({ code: -1, message: '备注名不能超过80个字符' });
     await SalesProfile.upsert({
       openid,
       salesName: finalSalesName,
       userNickName: String(user.nickName || '').trim(),
-      remarkName: hasRemarkName ? remarkName : (existingSalesProfile?.remarkName || ''),
+      // 旧字段不再写入，用户备注统一保存到 Users.remarkName。
       remark,
     });
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, 'remarkName')) {
+      await user.update({ remarkName });
+    }
 
     const salesProfiles = await SalesProfile.findAll({ order: [['createdAt', 'DESC']] });
     const orders = await Order.findAll({
@@ -3293,9 +3298,13 @@ app.post('/api/admin/sales', adminAuth, async (req, res) => {
     });
     const bindings = await UserSalesBinding.findAll();
     const statsMap = mergeBindingStatsIntoSalesStatsMap(buildSalesStatsMap(orders), bindings);
+    const remarkNameMap = await getUserRemarkNameMap(salesProfiles.map((profile) => profile.openid));
     res.send({
       code: 0,
-      data: salesProfiles.map((profile) => formatSalesProfile(profile, statsMap.get(profile.openid))),
+      data: salesProfiles.map((profile) => formatSalesProfile(profile, {
+        ...statsMap.get(profile.openid),
+        userRemarkName: remarkNameMap.get(profile.openid) || '',
+      })),
     });
   } catch (err) {
     res.send({ code: -1, message: err.message });

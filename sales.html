@@ -583,7 +583,7 @@
         await requestJson(`/api/admin/sales/bindings/${encodeURIComponent(normalizedUserOpenid)}/customer-remark-name`, {
           method: 'POST',
           headers: headers(),
-          body: JSON.stringify({ customerRemarkName }),
+        body: JSON.stringify({ remarkName: customerRemarkName }),
         });
         showNotice('客户备注名已更新');
         const previousSales = state.activeSalesBoundUsers;

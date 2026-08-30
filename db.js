@@ -66,7 +66,13 @@ const User = sequelize.define("User", {
     type: DataTypes.STRING(80),
     allowNull: false,
     defaultValue: "",
-    comment: "后台管理客户备注名",
+    comment: "旧版客户备注名，迁移至 remarkName 后仅用于兼容历史数据",
+  },
+  remarkName: {
+    type: DataTypes.STRING(80),
+    allowNull: false,
+    defaultValue: "",
+    comment: "后台管理用户备注名，按 openid 全局唯一",
   },
   latestUsersVisible: {
     type: DataTypes.BOOLEAN,
@@ -1112,6 +1118,12 @@ async function ensureOnlineSchema() {
     defaultValue: "",
     comment: "后台管理客户备注名",
   });
+  await ensureColumn("Users", "remarkName", {
+    type: DataTypes.STRING(80),
+    allowNull: false,
+    defaultValue: "",
+    comment: "后台管理用户备注名，按 openid 全局唯一",
+  });
   await ensureColumn("Users", "latestUsersVisible", {
     type: DataTypes.BOOLEAN,
     allowNull: false,
@@ -1236,6 +1248,29 @@ async function ensureOnlineSchema() {
   });
 }
 
+// 将曾经分别存放在客户绑定、销售档案和客户管理中的备注收敛到用户本身。
+// 已存在的统一备注优先级最高，避免覆盖管理员已更新过的数据。
+async function migrateLegacyUserRemarkNames() {
+  const [users, salesProfiles, bindings] = await Promise.all([
+    User.findAll({ attributes: ['id', 'openid', 'remarkName', 'adminRemarkName'] }),
+    SalesProfile.findAll({ attributes: ['openid', 'remarkName'] }),
+    UserSalesBinding.findAll({ attributes: ['userOpenid', 'customerRemarkName'] }),
+  ]);
+  const salesRemarkMap = new Map(salesProfiles.map((item) => [String(item.openid || '').trim(), String(item.remarkName || '').trim()]));
+  const bindingRemarkMap = new Map(bindings.map((item) => [String(item.userOpenid || '').trim(), String(item.customerRemarkName || '').trim()]));
+  await Promise.all(users.map(async (user) => {
+    const openid = String(user.openid || '').trim();
+    const remarkName = String(user.remarkName || '').trim()
+      || String(user.adminRemarkName || '').trim()
+      || salesRemarkMap.get(openid)
+      || bindingRemarkMap.get(openid)
+      || '';
+    if (remarkName && remarkName !== String(user.remarkName || '').trim()) {
+      await user.update({ remarkName });
+    }
+  }));
+}
+
 // 数据库初始化方法
 async function init() {
   for (const model of syncModels) {
@@ -1245,6 +1280,7 @@ async function init() {
   if (!shouldAlterTables) {
     await ensureOnlineSchema();
   }
+  await migrateLegacyUserRemarkNames();
 }
 
 // 导出初始化方法和模型
