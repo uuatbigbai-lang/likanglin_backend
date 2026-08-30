@@ -520,17 +520,17 @@
         <table>
           <thead>
             <tr>
-              <th style="width:210px">订单</th>
-              <th style="width:220px">下单客户 OpenID</th>
-              <th style="width:140px">客户手机号</th>
-              <th style="width:150px">对接销售名称</th>
-              <th style="width:220px">对接销售 OpenID</th>
+              <th style="width:170px">下单时间</th>
               <th>商品</th>
               <th style="width:120px">金额</th>
               <th style="width:130px">状态</th>
-              <th style="width:170px">下单时间</th>
               <th style="width:210px">收件信息</th>
               <th style="width:170px">物流</th>
+              <th style="width:150px">对接销售名称</th>
+              <th style="width:220px">对接销售 OpenID</th>
+              <th style="width:210px">订单</th>
+              <th style="width:220px">下单客户 OpenID</th>
+              <th style="width:140px">客户手机号</th>
               <th class="actions-column" style="width:230px">操作</th>
             </tr>
           </thead>
@@ -579,7 +579,7 @@
       <div class="modal-grid">
         <div class="modal-summary">
           <strong id="deleteOrderModalOrderNo">-</strong>
-          <div class="small">仅已完成、已退款且没有进行中售后的订单可删除。</div>
+          <div class="small">仅待付款、已完成、已退款且没有进行中售后的订单可删除。</div>
         </div>
         <div>
           <label for="deleteOrderModalInput">确认文字</label>
@@ -857,7 +857,7 @@
         const canStartReturn = [10, 40, 50].includes(Number(order.orderStatus));
         const canRefund = Number(order.orderStatus) === 60;
         const canCancelReturn = Number(order.orderStatus) === 60;
-        const canDelete = [50, 70].includes(Number(order.orderStatus));
+        const canDelete = [5, 50, 70].includes(Number(order.orderStatus));
         const isExpanded = state.expandedOrderNo === order.orderNo;
         const receiver = [logistics.receiverName, logistics.receiverPhone].filter(Boolean).join(' ');
         const address = [
@@ -869,15 +869,7 @@
         ].filter(Boolean).join(' ');
         return `
           <tr>
-            <td>
-              <div class="order-no">${escapeHtml(order.orderNo)}</div>
-              <div class="small">ID：${escapeHtml(order.orderId || '-')}</div>
-              <div class="small">交易单：${escapeHtml(payment.transactionId || payment.channelTrxNo || '-')}</div>
-            </td>
-            <td class="customer-identity">${escapeHtml(order.customerOpenid || order.uid || '-')}</td>
-            <td class="customer-phone">${escapeHtml(order.customerPhoneNumber || '-')}</td>
-            <td class="sales-name">${escapeHtml(order.customerSalesName || '-')}</td>
-            <td class="sales-openid">${escapeHtml(order.customerSalesOpenid || '-')}</td>
+            <td>${escapeHtml(formatDateTime(order.createTime || order.createdAt))}</td>
             <td class="goods">${goodsSummary(order)}</td>
             <td>
               <strong>${money(order.paymentAmount || order.totalAmount)}</strong>
@@ -888,7 +880,6 @@
               <span class="badge ${orderStatusClass(order)}">${escapeHtml(order.orderStatusName || '-')}</span>
               ${order.rightsNo ? `<div class="small">售后：${escapeHtml(order.rightsNo)}</div>` : ''}
             </td>
-            <td>${escapeHtml(formatDateTime(order.createTime || order.createdAt))}</td>
             <td>
               <div>${escapeHtml(receiver || '-')}</div>
               <div class="small">${escapeHtml(address || '-')}</div>
@@ -897,6 +888,15 @@
               <div>${escapeHtml(logistics.logisticsCompanyName || '-')}</div>
               <div class="small">${escapeHtml(logistics.logisticsNo || '')}</div>
             </td>
+            <td class="sales-name">${escapeHtml(order.customerSalesName || '-')}</td>
+            <td class="sales-openid">${escapeHtml(order.customerSalesOpenid || '-')}</td>
+            <td>
+              <div class="order-no">${escapeHtml(order.orderNo)}</div>
+              <div class="small">ID：${escapeHtml(order.orderId || '-')}</div>
+              <div class="small">交易单：${escapeHtml(payment.transactionId || payment.channelTrxNo || '-')}</div>
+            </td>
+            <td class="customer-identity">${escapeHtml(order.customerOpenid || order.uid || '-')}</td>
+            <td class="customer-phone">${escapeHtml(order.customerPhoneNumber || '-')}</td>
             <td class="actions-column">
               <div class="row-actions">
                 ${isPendingPay ? `<button type="button" data-action="edit-payment" data-order-no="${escapeHtml(order.orderNo)}" data-payment-amount="${escapeHtml(order.paymentAmount || order.totalAmount || '0')}">改金额</button>` : ''}

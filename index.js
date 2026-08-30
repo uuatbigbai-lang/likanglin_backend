@@ -147,23 +147,23 @@ const DEFAULT_COUPON_TEMPLATES = [
   },
   {
     templateType: 'third_gen_16s_experience',
-    title: '第三代16S检测体验券',
+    title: '16S检测体验券',
     ruleType: 'experience_price',
     value: 0,
     thresholdAmount: 0,
     minQuantity: 0,
-    desc: '第三代肠道菌群检测体验价380元/次，二代肠道与阴道菌群检测体验价280元/次，均包邮。',
+    desc: '第三代16S与阴道菌群检测体验价380元/次，二代肠道菌群检测体验价280元/次，均包邮。',
     sort: 60,
     meta: {
       experienceShared: true,
       experiencePriceBySpuId: {
         spu_probiotic_09: 38000,
         spu_probiotic_02: 28000,
-        spu_probiotic_05: 28000,
+        spu_probiotic_05: 38000,
       },
       scopeSpuIds: ['spu_probiotic_09', 'spu_probiotic_02', 'spu_probiotic_05'],
       scopeGoods: [
-        { spuId: 'spu_probiotic_09', title: '第三代肠道菌群检测服务' },
+        { spuId: 'spu_probiotic_09', title: '肠道菌群检测服务' },
         { spuId: 'spu_probiotic_02', title: '肠道菌群检测' },
         { spuId: 'spu_probiotic_05', title: '阴道菌群检测' },
       ],
@@ -224,6 +224,32 @@ const ensureDefaultCouponTemplates = async () => {
   }
 };
 
+// 已生成/已领取的体验券会保存规则快照；同步未核销快照以使价格调整立即生效。
+const refreshUnredeemedThirdGenExperienceCoupons = async () => {
+  const template = DEFAULT_COUPON_TEMPLATES.find((item) => item.templateType === 'third_gen_16s_experience');
+  if (!template) return;
+  const coupons = await CouponRecord.findAll({
+    where: {
+      templateType: template.templateType,
+      status: { [Op.in]: ['generated', 'claimed', 'forwarded'] },
+    },
+  });
+  await Promise.all(coupons.map(async (coupon) => {
+    const currentMeta = coupon.meta && typeof coupon.meta === 'object' ? coupon.meta : {};
+    const currentRuleMeta = currentMeta.meta && typeof currentMeta.meta === 'object' ? currentMeta.meta : {};
+    await coupon.update({
+      meta: {
+        ...currentMeta,
+        desc: template.desc,
+        meta: {
+          ...currentRuleMeta,
+          experiencePriceBySpuId: { ...(template.meta?.experiencePriceBySpuId || {}) },
+        },
+      },
+    });
+  }));
+};
+
 const getActiveCouponTemplate = async (templateType) => {
   const template = await CouponTemplate.findOne({
     where: { templateType: String(templateType || '').trim(), status: 1 },
@@ -249,6 +275,54 @@ const isCouponEmployee = async (openid) => {
 const getCouponRootNo = (coupon) => {
   const data = typeof coupon?.toJSON === 'function' ? coupon.toJSON() : coupon || {};
   return String(data.rootCouponNo || data.couponNo || '').trim();
+};
+
+const getCouponChainWhere = (coupon) => {
+  const rootCouponNo = getCouponRootNo(coupon);
+  return {
+    [Op.or]: [
+      { rootCouponNo },
+      { couponNo: rootCouponNo },
+    ],
+  };
+};
+
+const getUsedCouponInChain = async (coupon, options = {}) => CouponRecord.findOne({
+  where: {
+    ...getCouponChainWhere(coupon),
+    status: 'used',
+  },
+  ...options,
+});
+
+// 兼容旧“权益交接”规则：未被整链核销的已转发券恢复为待使用；
+// 已被任一成员核销的旧链路则统一保持已核销。
+const migrateLegacyForwardedCouponChains = async () => {
+  const usedCoupons = await CouponRecord.findAll({
+    where: { status: 'used' },
+    attributes: ['couponNo', 'rootCouponNo', 'usedByOpenid', 'orderNo', 'discountAmount', 'usedAt'],
+  });
+  for (const usedCoupon of usedCoupons) {
+    const data = typeof usedCoupon.toJSON === 'function' ? usedCoupon.toJSON() : usedCoupon;
+    await CouponRecord.update({
+      status: 'used',
+      usedByOpenid: data.usedByOpenid || '',
+      orderNo: data.orderNo || '',
+      discountAmount: data.discountAmount || '0',
+      usedAt: data.usedAt || new Date(),
+    }, {
+      where: {
+        ...getCouponChainWhere(data),
+        status: { [Op.ne]: 'used' },
+      },
+    });
+  }
+  await CouponRecord.update({ status: 'claimed' }, {
+    where: {
+      status: 'forwarded',
+      claimedByOpenid: { [Op.ne]: null },
+    },
+  });
 };
 
 const formatCouponRecord = (coupon) => {
@@ -316,7 +390,7 @@ const formatCouponRecord = (coupon) => {
       : template.ruleType === 'employee_price'
         ? '仅对已配置员工价的商品生效，下单时按员工价自动抵扣差额；收货下单时加收15元快递费。'
         : isExperiencePrice
-          ? `仅限第三代16S、二代肠道及阴道菌群检测服务；${experienceShared ? '符合条件的每件商品均享体验价。' : '购物车内仅价格最高的一件商品享体验价。'}`
+          ? `仅限16S、二代肠道及阴道菌群检测服务；${experienceShared ? '符合条件的每件商品均享体验价。' : '购物车内仅价格最高的一件商品享体验价。'}`
         : getScopedSpuIds(template).length
           ? '仅对指定商品生效，下单时自动按命中的商品金额抵扣。'
           : '下单时自动选择可用优惠券并抵扣。',
@@ -329,11 +403,12 @@ const formatCouponRecord = (coupon) => {
 const formatCouponRecordForRequester = async (coupon, openid) => {
   const data = typeof coupon?.toJSON === 'function' ? coupon.toJSON() : coupon || {};
   const isOwner = String(data.claimedByOpenid || '') === String(openid || '');
-  const canForward = data.status === 'claimed' && isOwner && await isCouponEmployee(openid);
+  const chainUsed = await getUsedCouponInChain(data);
+  const canForward = data.status === 'claimed' && isOwner && !chainUsed && await isCouponEmployee(openid);
   return {
     ...formatCouponRecord(coupon),
     canForward,
-    forwardHint: canForward ? '您已通过员工身份验证，可继续转发给好友领取。' : '',
+    forwardHint: canForward ? '您已通过员工身份验证，可继续转发；转发后您仍可使用，链路中任一人使用后全员失效。' : '',
   };
 };
 
@@ -365,6 +440,7 @@ const getProductBasePrice = (product = {}, skuId = '') => (
 );
 
 const getProductEmployeePrice = (product = {}) => Math.max(parseMoneyToCents(product.employeePrice), 0);
+const getProductEmployeeMonthlyUsageLimit = (product = {}) => Math.max(Math.floor(Number(product.employeeMonthlyUsageLimit || 0)), 0);
 
 const buildSpecsText = (specInfo = []) => (
   Array.isArray(specInfo)
@@ -387,6 +463,7 @@ const buildPricedGoodsList = async (goodsList = []) => {
     const price = getProductBasePrice(product, skuId)
       || Math.max(Number(item.price || item.settlePrice || item.actualPrice || 0), 0);
     const employeePrice = getProductEmployeePrice(product);
+    const employeeMonthlyUsageLimit = getProductEmployeeMonthlyUsageLimit(product);
     return {
       storeId: item.storeId || '1',
       storeName: item.storeName || '蓝点荟旗舰店',
@@ -401,6 +478,7 @@ const buildPricedGoodsList = async (goodsList = []) => {
       settlePrice: price,
       actualPrice: price,
       employeePrice,
+      employeeMonthlyUsageLimit,
       specs: item.specs || buildSpecsText(item.specInfo || []),
       specInfo: Array.isArray(item.specInfo) ? item.specInfo : [],
       skuSpecLst: Array.isArray(item.specInfo) ? item.specInfo : [],
@@ -535,6 +613,22 @@ const calculateCouponDiscount = (coupon, goodsList = [], totalAmount = 0) => {
   return 0;
 };
 
+const getEmployeeCouponMonthlyQuotaReason = async (openid, coupon, goodsList = []) => {
+  if (getCouponTemplateSnapshot(coupon).templateType !== 'employee_special') return '';
+  const limited = new Map((goodsList || []).filter((goods) => Number(goods.employeeMonthlyUsageLimit || 0) > 0).map((goods) => [String(goods.spuId || ''), goods]));
+  if (!limited.size) return '';
+  const now = new Date();
+  const orders = await Order.findAll({ where: { openid, orderStatus: { [Op.in]: [10, 40, 50, ORDER_STATUS_RETURNING, ORDER_STATUS_REFUNDED] }, createdAt: { [Op.gte]: new Date(now.getFullYear(), now.getMonth(), 1) } }, attributes: ['goodsList', 'couponSnapshot'] });
+  const counts = new Map();
+  orders.forEach((order) => {
+    const data = typeof order.toJSON === 'function' ? order.toJSON() : order;
+    if (data?.couponSnapshot?.templateType !== 'employee_special') return;
+    new Set((data.goodsList || []).map((goods) => String(goods?.spuId || '')).filter((spuId) => limited.has(spuId))).forEach((spuId) => counts.set(spuId, Number(counts.get(spuId) || 0) + 1));
+  });
+  const exceeded = Array.from(limited.entries()).map(([spuId, goods]) => ({ title: goods.goodsName || goods.title || spuId, limit: Number(goods.employeeMonthlyUsageLimit), count: Number(counts.get(spuId) || 0) })).filter((item) => item.count >= item.limit);
+  return exceeded.length ? `员工优惠券本月使用次数已达上限：${exceeded.map((item) => `${item.title}（已使用${item.count}/${item.limit}次）`).join('、')}。请取消选择该优惠券` : '';
+};
+
 const getCouponFreight = (coupon, { isOnlyPayment = false } = {}) => {
   const template = getCouponTemplateSnapshot(coupon);
   if (template.templateType !== 'employee_special' || isOnlyPayment) {
@@ -572,7 +666,7 @@ const getCouponUnavailableReason = (coupon, goodsList = []) => {
   }
   if (template.ruleType === 'experience_price') {
     if (!calculateExperiencePriceDiscount(template, eligibleGoodsList)) {
-      return `${template.title}仅限第三代16S、二代肠道或阴道菌群检测服务使用`;
+      return `${template.title}仅限16S、二代肠道或阴道菌群检测服务使用`;
     }
   }
   if (template.ruleType === 'buy_x_get_y') {
@@ -1116,7 +1210,8 @@ const isWechatPayTransactionId = (value) => /^420\d{25,}$/.test(String(value || 
 
 const isOnlyPaymentOrder = (order) => {
   const data = typeof order?.toJSON === 'function' ? order.toJSON() : (order || {});
-  if (typeof data.isOnlyPayment === 'boolean') return data.isOnlyPayment;
+  if (data.isOnlyPayment === true) return true;
+  if (data.isOnlyPayment === false && data.userAddress) return false;
   return !data.userAddress;
 };
 
@@ -1125,6 +1220,8 @@ const markOrderPaid = async (order, transactionId, paidAt) => {
   const onlyPayment = isOnlyPaymentOrder(order);
 
   await order.update({
+    // 支付成功时固化最终订单模式，保证仅付款订单不会在后续流程中被重新识别为待发货。
+    isOnlyPayment: onlyPayment,
     orderStatus: onlyPayment ? 50 : 10,
     orderStatusName: onlyPayment ? '交易完成' : '待发货',
     transactionId: transactionId || order.transactionId || 'CLIENT_CONFIRMED',
@@ -2067,18 +2164,30 @@ const adminAuth = createAdminAuth({ AdminAccount });
 
 const redeemCouponForOrder = async (order) => {
   if (!order || !order.couponNo) return null;
-  const coupon = await CouponRecord.findOne({ where: { couponNo: order.couponNo } });
-  if (!coupon || coupon.status === 'used') return coupon;
-  if (coupon.status !== 'claimed') return coupon;
+  return CouponRecord.sequelize.transaction(async (transaction) => {
+    const coupon = await CouponRecord.findOne({ where: { couponNo: order.couponNo }, transaction });
+    if (!coupon || coupon.status === 'used') return coupon;
+    if (coupon.status !== 'claimed') return coupon;
 
-  await coupon.update({
-    status: 'used',
-    usedByOpenid: order.openid || coupon.claimedByOpenid,
-    orderNo: order.orderNo,
-    discountAmount: String(order.couponAmount || '0'),
-    usedAt: new Date(),
+    const usedCoupon = await getUsedCouponInChain(coupon, { transaction });
+    if (usedCoupon) return usedCoupon;
+
+    const usedAt = new Date();
+    await CouponRecord.update({
+      status: 'used',
+      usedByOpenid: order.openid || coupon.claimedByOpenid,
+      orderNo: order.orderNo,
+      discountAmount: String(order.couponAmount || '0'),
+      usedAt,
+    }, {
+      where: {
+        ...getCouponChainWhere(coupon),
+        status: { [Op.in]: ['generated', 'claimed', 'forwarded'] },
+      },
+      transaction,
+    });
+    return CouponRecord.findOne({ where: { couponNo: coupon.couponNo }, transaction });
   });
-  return coupon;
 };
 
 app.get('/', (req, res) => {
@@ -2115,6 +2224,10 @@ app.get('/admin/bindings', (req, res) => {
 
 app.get('/admin/sales', (req, res) => {
   res.sendFile(path.join(__dirname, 'sales.html'));
+});
+
+app.get('/admin/customers', (req, res) => {
+  res.sendFile(path.join(__dirname, 'customers.html'));
 });
 registerAdminAuthRoutes({ app, AdminAccount, adminAuth });
 
@@ -2555,6 +2668,9 @@ app.post('/api/coupon/share', async (req, res) => {
 
     const coupon = await CouponRecord.findOne({ where: { couponNo } });
     if (!coupon) return res.send({ code: -1, message: '优惠券不存在' });
+    if (await getUsedCouponInChain(coupon)) {
+      return res.send({ code: -1, message: '该优惠券转发链路已被使用，不能继续转发' });
+    }
 
     if (coupon.status === 'generated') {
       if (coupon.createdByOpenid !== openid) {
@@ -2592,8 +2708,10 @@ app.post('/api/coupon/share', async (req, res) => {
       return res.send({ code: -1, message: '当前用户不是员工身份，领取后不能继续转发' });
     }
 
-    // 员工继续转发属于权益交接：原券立即失效，避免同一权益被持有人和接收人同时使用。
+    // 员工继续转发共享同一条优惠权益：转发人保留可用资格，任一成员核销后整条链路统一失效。
     const { childCoupon, share } = await CouponRecord.sequelize.transaction(async (transaction) => {
+      const usedCoupon = await getUsedCouponInChain(coupon, { transaction });
+      if (usedCoupon) throw new Error('该优惠券转发链路已被使用，请刷新后重试');
       const childCouponNo = buildCouponNo();
       const childCoupon = await CouponRecord.create({
         couponNo: childCouponNo,
@@ -2607,21 +2725,6 @@ app.post('/api/coupon/share', async (req, res) => {
         forwardedAt: new Date(),
         meta: coupon.meta || {},
       }, { transaction });
-      const [updatedCount] = await CouponRecord.update({
-        status: 'forwarded',
-        forwardedByOpenid: openid,
-        forwardedAt: new Date(),
-        meta: {
-          ...(coupon.meta || {}),
-          forwardedToCouponNo: childCouponNo,
-        },
-      }, {
-        where: { couponNo, status: 'claimed', claimedByOpenid: openid },
-        transaction,
-      });
-      if (!updatedCount) {
-        throw new Error('优惠券状态已变更，请刷新后重试');
-      }
       const share = await CouponShareRecord.create({
         shareId: buildCouponShareId(),
         couponNo: childCoupon.couponNo,
@@ -2651,6 +2754,9 @@ app.post('/api/coupon/claim', async (req, res) => {
 
     const coupon = await CouponRecord.findOne({ where: { couponNo } });
     if (!coupon) return res.send({ code: -1, message: '优惠券不存在' });
+    if (await getUsedCouponInChain(coupon)) {
+      return res.send({ code: -1, message: '该优惠券转发链路已被使用，不能领取或使用' });
+    }
     let shareRecord = null;
     if (shareId) {
       shareRecord = await CouponShareRecord.findOne({ where: { shareId, couponNo } });
@@ -2823,12 +2929,13 @@ app.get('/api/admin/products', adminAuth, async (req, res) => {
     const products = await Product.findAll({
       where,
       order: [['sort', 'DESC'], ['createdAt', 'DESC']],
-      attributes: ['spuId', 'title', 'brief', 'price', 'minSalePrice', 'employeePrice'],
+      attributes: ['spuId', 'title', 'brief', 'price', 'minSalePrice', 'employeePrice', 'employeeMonthlyUsageLimit'],
     });
     const data = products.map((product) => {
       const item = typeof product.toJSON === 'function' ? product.toJSON() : product;
       const salePrice = Math.round(Number(item.minSalePrice || 0)) || productPriceToCents(item.price);
       const employeePrice = Math.max(Number(item.employeePrice || 0), 0);
+      const employeeMonthlyUsageLimit = Math.max(Math.floor(Number(item.employeeMonthlyUsageLimit || 0)), 0);
       return {
         ...item,
         salePrice,
@@ -2836,6 +2943,7 @@ app.get('/api/admin/products', adminAuth, async (req, res) => {
         employeePrice,
         employeePriceText: employeePrice ? `¥${(employeePrice / 100).toFixed(2)}` : '',
         employeePriceYuan: employeePrice ? (employeePrice / 100).toFixed(2) : '',
+        employeeMonthlyUsageLimit,
       };
     });
     res.send({ code: 0, data });
@@ -2850,6 +2958,7 @@ app.post('/api/admin/products/:spuId', adminAuth, async (req, res) => {
     const product = await Product.findOne({ where: { spuId } });
     if (!product) return res.send({ code: -1, message: '商品不存在' });
     const rawEmployeePrice = String(req.body?.employeePrice ?? '').trim();
+    const rawEmployeeMonthlyUsageLimit = String(req.body?.employeeMonthlyUsageLimit ?? '').trim();
     let employeePrice = 0;
     if (rawEmployeePrice) {
       const parsed = Number(rawEmployeePrice);
@@ -2858,8 +2967,10 @@ app.post('/api/admin/products/:spuId', adminAuth, async (req, res) => {
       }
       employeePrice = Math.round(parsed * 100);
     }
-    await product.update({ employeePrice });
-    res.send({ code: 0, data: { spuId, employeePrice } });
+    const employeeMonthlyUsageLimit = rawEmployeeMonthlyUsageLimit === '' ? 0 : Number(rawEmployeeMonthlyUsageLimit);
+    if (!Number.isInteger(employeeMonthlyUsageLimit) || employeeMonthlyUsageLimit < 0 || employeeMonthlyUsageLimit > 999) return res.send({ code: -1, message: '月最大使用次数需为 0-999 的整数' });
+    await product.update({ employeePrice, employeeMonthlyUsageLimit });
+    res.send({ code: 0, data: { spuId, employeePrice, employeeMonthlyUsageLimit } });
   } catch (err) {
     res.send({ code: -1, message: err.message });
   }
@@ -2926,6 +3037,50 @@ app.get('/api/admin/sales/bindings', adminAuth, async (req, res) => {
         records: records.map(formatUserSalesBindingRecord),
       },
     });
+  } catch (err) {
+    res.send({ code: -1, message: err.message });
+  }
+});
+
+app.get('/api/admin/customers', adminAuth, async (req, res) => {
+  try {
+    const [users, salesProfiles, couponAdmins, bindingSources] = await Promise.all([
+      User.findAll({ attributes: ['openid', 'nickName', 'phoneNumber', 'adminRemarkName'], order: [['createdAt', 'DESC']] }),
+      SalesProfile.findAll(),
+      AdminWhitelist.findAll({ attributes: ['openid'] }),
+      buildCurrentBindingsFromSources(),
+    ]);
+    const salesMap = new Map(salesProfiles.map((item) => [item.openid, formatSalesProfile(item)]));
+    const adminOpenids = new Set(couponAdmins.map((item) => item.openid));
+    res.send({ code: 0, data: users.map((user) => {
+      const data = typeof user.toJSON === 'function' ? user.toJSON() : user;
+      const binding = bindingSources.currentBindingMap.get(data.openid);
+      const sales = binding ? salesMap.get(binding.salesOpenid) : null;
+      return {
+        openid: data.openid,
+        nickName: data.nickName || '',
+        phoneNumber: data.phoneNumber || '',
+        customerRemarkName: data.adminRemarkName || binding?.customerRemarkName || '',
+        salesOpenid: binding?.salesOpenid || '',
+        salesName: sales?.remarkName || sales?.salesName || binding?.salesNameSnapshot || '',
+        isSales: salesMap.has(data.openid),
+        isCouponAdmin: adminOpenids.has(data.openid),
+      };
+    }) });
+  } catch (err) { res.send({ code: -1, message: err.message }); }
+});
+
+app.post('/api/admin/customers/:openid/remark-name', adminAuth, async (req, res) => {
+  try {
+    const openid = String(req.params.openid || '').trim();
+    const adminRemarkName = String(req.body?.adminRemarkName || '').trim();
+    if (!openid) return res.send({ code: -1, message: '缺少客户 openid' });
+    if (adminRemarkName.length > 80) return res.send({ code: -1, message: '客户备注名不能超过80个字符' });
+
+    const user = await User.findOne({ where: { openid } });
+    if (!user) return res.send({ code: -1, message: '客户不存在' });
+    await user.update({ adminRemarkName });
+    res.send({ code: 0, data: { openid, adminRemarkName } });
   } catch (err) {
     res.send({ code: -1, message: err.message });
   }
@@ -3596,7 +3751,7 @@ app.post('/api/products/seed', async (req, res) => {
     };
      const prod9 = {
       spuId: 'spu_probiotic_09',
-      title: '第三代肠道16S检测',
+      title: '肠道16S检测',
       brief: '',
       price: 1298,
       badge: '',
@@ -4036,28 +4191,29 @@ app.post('/api/order/settle', async (req, res) => {
       where: couponWhere,
       order: [['claimedAt', 'ASC'], ['createdAt', 'ASC']],
     });
-    const couponCandidates = claimedCoupons.map((coupon) => ({
+    const couponCandidates = await Promise.all(claimedCoupons.map(async (coupon) => ({
       coupon,
       amount: calculateCouponDiscount(coupon, skuDetailVos, totalSalePrice),
-    }));
+      quotaReason: await getEmployeeCouponMonthlyQuotaReason(openid, coupon, skuDetailVos),
+    })));
     const selectedCoupon = requestedCouponNo
-      ? (couponCandidates.find((item) => item.amount > 0) || null)
-      : (couponCandidates.find((item) => item.amount > 0) || null);
+      ? (couponCandidates.find((item) => item.amount > 0 && !item.quotaReason) || null)
+      : (couponCandidates.find((item) => item.amount > 0 && !item.quotaReason) || null);
     const totalCouponAmount = selectedCoupon ? selectedCoupon.amount : 0;
     const freight = selectedCoupon
       ? getCouponFreight(selectedCoupon.coupon, { isOnlyPayment: !!isOnlyPayment })
       : { amount: 0, snapshot: null };
     const totalPayAmount = Math.max(totalSalePrice - totalCouponAmount + freight.amount, 1);
-    const settleCouponList = couponCandidates.map(({ coupon, amount }) => {
+    const settleCouponList = couponCandidates.map(({ coupon, amount, quotaReason }) => {
       const formatted = formatCouponRecord(coupon);
-      const isUsable = amount > 0;
+      const isUsable = amount > 0 && !quotaReason;
       return {
         ...formatted,
         status: isUsable ? formatted.status : 'unavailable',
         selected: !!selectedCoupon && coupon.couponNo === selectedCoupon.coupon.couponNo,
         discountAmount: String(amount),
-        unavailableReason: isUsable ? '' : getCouponUnavailableReason(coupon, skuDetailVos),
-        desc: isUsable ? formatted.desc : getCouponUnavailableReason(coupon, skuDetailVos),
+        unavailableReason: isUsable ? '' : (quotaReason || getCouponUnavailableReason(coupon, skuDetailVos)),
+        desc: isUsable ? formatted.desc : (quotaReason || getCouponUnavailableReason(coupon, skuDetailVos)),
       };
     });
 
@@ -4766,8 +4922,8 @@ app.post('/api/admin/order/delete', adminAuth, async (req, res) => {
 
     const order = await Order.findOne({ where: { orderNo: normalizedOrderNo } });
     if (!order) return res.send({ code: -1, message: '订单不存在或已删除' });
-    if (![50, ORDER_STATUS_REFUNDED].includes(Number(order.orderStatus))) {
-      return res.send({ code: -1, message: '仅已完成或已退款的历史订单可以删除' });
+    if (![5, 50, ORDER_STATUS_REFUNDED].includes(Number(order.orderStatus))) {
+      return res.send({ code: -1, message: '仅待付款、已完成或已退款的订单可以删除' });
     }
 
     const activeAfterSaleCount = await AfterSale.count({
@@ -5053,12 +5209,16 @@ app.post('/api/order/create', async (req, res) => {
       where: couponWhere,
       order: [['claimedAt', 'ASC'], ['createdAt', 'ASC']],
     });
-    const selectedCoupon = claimedCoupons
+    let selectedCoupon = claimedCoupons
       .map((coupon) => ({
         coupon,
         amount: calculateCouponDiscount(coupon, pricedGoodsList, calcTotal),
       }))
       .find((item) => item.amount > 0);
+    if (selectedCoupon) {
+      const quotaReason = await getEmployeeCouponMonthlyQuotaReason(openid, selectedCoupon.coupon, pricedGoodsList);
+      if (quotaReason) return res.send({ code: -1, message: quotaReason });
+    }
     const couponAmount = selectedCoupon ? selectedCoupon.amount : 0;
     const freight = selectedCoupon
       ? getCouponFreight(selectedCoupon.coupon, { isOnlyPayment: !!isOnlyPayment })
@@ -5197,6 +5357,24 @@ app.post('/api/order/pay', async (req, res) => {
           salesNameSnapshot: boundSales.salesName,
         });
       }
+    }
+
+    // 兼容此前仅付款订单因客户端漏传 isOnlyPayment 而已计入的员工券快递费。
+    const freightFee = Math.max(Number(order.freightFee || 0), 0);
+    const couponTemplateType = String(
+      order.freightSnapshot?.couponTemplateType || order.couponSnapshot?.templateType || '',
+    ).trim();
+    if (isOnlyPaymentOrder(order) && freightFee > 0 && couponTemplateType === 'employee_special') {
+      const correctedPaymentAmount = Math.max(
+        Number(order.paymentAmount || order.totalAmount || 0) - freightFee,
+        1,
+      );
+      await order.update({
+        isOnlyPayment: true,
+        paymentAmount: String(correctedPaymentAmount),
+        freightFee: '0',
+        freightSnapshot: null,
+      });
     }
 
     let payData = null;
@@ -5348,6 +5526,8 @@ const postLocalSeed = (pathName, label) => {
 async function bootstrap() {
   await initDB();
   await ensureDefaultCouponTemplates();
+  await migrateLegacyForwardedCouponChains();
+  await refreshUnredeemedThirdGenExperienceCoupons();
   startAutoConfirmReceivedTask();
   startExpiredPendingOrderCleanupTask();
 

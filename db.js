@@ -62,6 +62,12 @@ const User = sequelize.define("User", {
     defaultValue: 0,
     comment: "性别",
   },
+  adminRemarkName: {
+    type: DataTypes.STRING(80),
+    allowNull: false,
+    defaultValue: "",
+    comment: "后台管理客户备注名",
+  },
   latestUsersVisible: {
     type: DataTypes.BOOLEAN,
     allowNull: false,
@@ -123,6 +129,12 @@ const Product = sequelize.define("Product", {
     allowNull: false,
     defaultValue: 0,
     comment: "员工价（分），0 表示未配置",
+  },
+  employeeMonthlyUsageLimit: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    defaultValue: 0,
+    comment: "员工价每用户每商品自然月最大下单次数，0 表示不限",
   },
   badge: {
     type: DataTypes.STRING(50),
@@ -1064,6 +1076,12 @@ async function ensureOnlineSchema() {
     defaultValue: 0,
     comment: "员工价（分），0 表示未配置",
   });
+  await ensureColumn("Products", "employeeMonthlyUsageLimit", {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    defaultValue: 0,
+    comment: "员工价每用户每商品自然月最大下单次数，0 表示不限",
+  });
   await ensureColumn("SalesProfiles", "remarkName", {
     type: DataTypes.STRING(80),
     allowNull: false,
@@ -1087,6 +1105,12 @@ async function ensureOnlineSchema() {
     allowNull: false,
     defaultValue: "",
     comment: "后台管理客户备注名快照",
+  });
+  await ensureColumn("Users", "adminRemarkName", {
+    type: DataTypes.STRING(80),
+    allowNull: false,
+    defaultValue: "",
+    comment: "后台管理客户备注名",
   });
   await ensureColumn("Users", "latestUsersVisible", {
     type: DataTypes.BOOLEAN,

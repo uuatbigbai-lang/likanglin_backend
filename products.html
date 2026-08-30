@@ -122,7 +122,7 @@
   <main class="page">
     <section class="card header">
       <h1>商品管理</h1>
-      <div class="muted">维护商品员工价。员工特别优惠券生效时，将按每件商品的员工价自动重算抵扣。</div>
+      <div class="muted">维护商品员工价及每位用户每月可使用员工价下单的最大次数；填 0 表示不限。</div>
     </section>
 
     <section class="card">
@@ -245,6 +245,7 @@
               <th>SPU ID</th>
               <th>商城价</th>
               <th>员工价</th>
+              <th>月最大使用次数</th>
               <th>说明</th>
               <th>操作</th>
             </tr>
@@ -267,6 +268,7 @@
                     placeholder="如 99.00"
                   >
                 </td>
+                <td><input class="price-input" type="number" min="0" step="1" data-role="employee-monthly-usage-limit" data-spu-id="${escapeHtml(item.spuId)}" value="${escapeHtml(item.employeeMonthlyUsageLimit || 0)}" placeholder="0 表示不限"></td>
                 <td class="small">${item.employeePrice > 0 ? `当前员工价 ${escapeHtml(item.employeePriceText)}` : '未配置员工价'}</td>
                 <td>
                   <button type="button" data-role="save" data-spu-id="${escapeHtml(item.spuId)}">保存</button>
@@ -292,12 +294,18 @@
       return input ? input.value.trim() : '';
     }
 
+    function readEmployeeMonthlyUsageLimit(spuId) {
+      const input = document.querySelector(`[data-role="employee-monthly-usage-limit"][data-spu-id="${CSS.escape(spuId)}"]`);
+      return input ? input.value.trim() : '';
+    }
+
     async function saveEmployeePrice(spuId) {
       const employeePrice = readEmployeePrice(spuId);
+      const employeeMonthlyUsageLimit = readEmployeeMonthlyUsageLimit(spuId);
       await requestJson(`/api/admin/products/${encodeURIComponent(spuId)}`, {
         method: 'POST',
         headers: headers(),
-        body: JSON.stringify({ employeePrice }),
+        body: JSON.stringify({ employeePrice, employeeMonthlyUsageLimit }),
       });
       showNotice(`商品 ${spuId} 的员工价已更新`);
       await fetchProducts();
