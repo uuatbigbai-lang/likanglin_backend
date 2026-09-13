@@ -112,6 +112,36 @@
       font-size: 13px;
       line-height: 20px;
     }
+    .table-wrap {
+      overflow-x: auto;
+      border: 1px solid #eef2f6;
+      border-radius: 6px;
+    }
+    table {
+      width: 100%;
+      min-width: 640px;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    th,
+    td {
+      padding: 10px 12px;
+      border-bottom: 1px solid #eef2f6;
+      text-align: left;
+      vertical-align: middle;
+    }
+    th {
+      background: #f8fafc;
+      color: #344054;
+      font-weight: 700;
+    }
+    tr:last-child td { border-bottom: 0; }
+    .scope-checkbox {
+      width: 18px;
+      min-height: 18px;
+      margin: 0;
+      accent-color: #2472c8;
+    }
     .inline-form {
       display: grid;
       grid-template-columns: minmax(0, 1fr) minmax(0, 0.75fr);
@@ -245,6 +275,25 @@
       </div>
     </section>
 
+    <section class="panel admin-card" style="margin-bottom:16px">
+      <div class="card-head">
+        <div>
+          <h2>商品适用券配置</h2>
+          <div class="small" style="margin-top:4px">控制小程序生成指定折扣券时可选择的商品。未保存配置的历史商品默认可用于全部折扣券。</div>
+        </div>
+        <div class="auth-actions">
+          <button id="refreshCouponProductEligibility" class="subtle" type="button">刷新</button>
+          <button id="saveCouponProductEligibility" type="button">保存配置</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead id="couponProductEligibilityHead"></thead>
+          <tbody id="couponProductEligibilityBody"></tbody>
+        </table>
+      </div>
+    </section>
+
     <section class="panel admin-card">
       <div class="card-head">
         <div>
@@ -262,6 +311,7 @@
     const state = {
       authToken: '',
       adminProfile: null,
+      couponProductEligibility: { couponTypes: [], products: [] },
     };
     const $ = (id) => document.getElementById(id);
 
@@ -415,6 +465,65 @@
       }
     }
 
+    function renderCouponProductEligibility() {
+      const { couponTypes = [], products = [] } = state.couponProductEligibility;
+      $('couponProductEligibilityHead').innerHTML = `<tr>
+        <th>商品</th>
+        <th>SPU ID</th>
+        ${couponTypes.map((item) => `<th>${escapeHtml(item.title)}</th>`).join('')}
+      </tr>`;
+      $('couponProductEligibilityBody').innerHTML = products.length ? products.map((product) => {
+        const selectedTypes = new Set(product.couponTemplateTypes || []);
+        return `<tr>
+          <td><strong>${escapeHtml(product.title || '-')}</strong>${Number(product.status) !== 1 ? '<div class="small">已下架</div>' : ''}</td>
+          <td>${escapeHtml(product.spuId)}</td>
+          ${couponTypes.map((couponType) => `<td>
+            <input
+              class="scope-checkbox"
+              type="checkbox"
+              aria-label="${escapeHtml(product.title)} 适用 ${escapeHtml(couponType.title)}"
+              data-spu-id="${escapeHtml(product.spuId)}"
+              data-template-type="${escapeHtml(couponType.templateType)}"
+              ${selectedTypes.has(couponType.templateType) ? 'checked' : ''}
+            >
+          </td>`).join('')}
+        </tr>`;
+      }).join('') : '<tr><td colspan="10" class="empty">暂无商品</td></tr>';
+    }
+
+    async function loadCouponProductEligibility() {
+      const refreshButton = $('refreshCouponProductEligibility');
+      refreshButton.disabled = true;
+      try {
+        const json = await requestJson('/api/admin/coupon-product-eligibility', { headers: headers() });
+        state.couponProductEligibility = json.data || { couponTypes: [], products: [] };
+        renderCouponProductEligibility();
+      } finally {
+        refreshButton.disabled = false;
+      }
+    }
+
+    async function saveCouponProductEligibility() {
+      const saveButton = $('saveCouponProductEligibility');
+      const products = state.couponProductEligibility.products || [];
+      saveButton.disabled = true;
+      try {
+        await requestJson('/api/admin/coupon-product-eligibility', {
+          method: 'POST',
+          headers: headers(),
+          body: JSON.stringify({
+            products: products.map((item) => ({
+              spuId: item.spuId,
+              couponTemplateTypes: item.couponTemplateTypes || [],
+            })),
+          }),
+        });
+        showNotice('商品适用券配置已保存');
+      } finally {
+        saveButton.disabled = false;
+      }
+    }
+
     async function loadCouponShareRecords() {
       const button = $('refreshCouponShareRecords');
       button.disabled = true;
@@ -467,6 +576,7 @@
         updateAuthUI();
         await Promise.all([
           loadCouponAdmins(),
+          loadCouponProductEligibility(),
           loadCouponRecords(),
           loadCouponShareRecords(),
         ]);
@@ -503,6 +613,34 @@
       try {
         await loadCouponRecords();
         showNotice('优惠券流水已刷新');
+      } catch (err) {
+        showNotice(err.message, true);
+      }
+    });
+
+    $('couponProductEligibilityBody').addEventListener('change', (event) => {
+      const target = event.target.closest('.scope-checkbox');
+      if (!target) return;
+      const product = (state.couponProductEligibility.products || []).find((item) => item.spuId === target.dataset.spuId);
+      if (!product) return;
+      const selectedTypes = new Set(product.couponTemplateTypes || []);
+      if (target.checked) selectedTypes.add(target.dataset.templateType);
+      else selectedTypes.delete(target.dataset.templateType);
+      product.couponTemplateTypes = Array.from(selectedTypes);
+    });
+
+    $('refreshCouponProductEligibility').addEventListener('click', async () => {
+      try {
+        await loadCouponProductEligibility();
+        showNotice('商品适用券配置已刷新');
+      } catch (err) {
+        showNotice(err.message, true);
+      }
+    });
+
+    $('saveCouponProductEligibility').addEventListener('click', async () => {
+      try {
+        await saveCouponProductEligibility();
       } catch (err) {
         showNotice(err.message, true);
       }

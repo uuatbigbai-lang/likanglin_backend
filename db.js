@@ -142,6 +142,12 @@ const Product = sequelize.define("Product", {
     defaultValue: 0,
     comment: "员工价每用户每商品自然月最大下单次数，0 表示不限",
   },
+  couponTemplateTypes: {
+    type: DataTypes.JSON,
+    allowNull: true,
+    defaultValue: null,
+    comment: "可作为指定适用商品的优惠券模板标识；null 表示沿用全部折扣券默认配置",
+  },
   badge: {
     type: DataTypes.STRING(50),
     allowNull: true,
@@ -1076,6 +1082,12 @@ async function ensureColumn(tableName, columnName, definition) {
 }
 
 async function ensureOnlineSchema() {
+  await ensureColumn("Products", "couponTemplateTypes", {
+    type: DataTypes.JSON,
+    allowNull: true,
+    defaultValue: null,
+    comment: "可作为指定适用商品的优惠券模板标识；null 表示沿用全部折扣券默认配置",
+  });
   await ensureColumn("Products", "employeePrice", {
     type: DataTypes.INTEGER,
     allowNull: false,

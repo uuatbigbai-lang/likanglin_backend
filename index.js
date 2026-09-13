@@ -171,6 +171,24 @@ const DEFAULT_COUPON_TEMPLATES = [
   },
 ];
 
+const SCOPED_DISCOUNT_TEMPLATE_TYPES = DEFAULT_COUPON_TEMPLATES
+  .filter((item) => item.ruleType === 'discount')
+  .map((item) => item.templateType);
+
+const normalizeCouponTemplateTypes = (templateTypes, { useDefaultWhenMissing = false } = {}) => {
+  if (!Array.isArray(templateTypes)) {
+    return useDefaultWhenMissing ? [...SCOPED_DISCOUNT_TEMPLATE_TYPES] : null;
+  }
+  return Array.from(new Set(templateTypes
+    .map((item) => String(item || '').trim())
+    .filter((item) => SCOPED_DISCOUNT_TEMPLATE_TYPES.includes(item))));
+};
+
+const isProductEnabledForCouponTemplate = (product = {}, templateType = '') => {
+  const configuredTemplateTypes = normalizeCouponTemplateTypes(product.couponTemplateTypes);
+  return configuredTemplateTypes === null || configuredTemplateTypes.includes(String(templateType || '').trim());
+};
+
 const normalizeCouponTemplate = (template = {}) => {
   const ruleType = String(template.ruleType || template.type || 'discount').trim();
   const value = Math.max(Number(template.value || 0), 0);
@@ -2527,7 +2545,11 @@ app.post('/api/coupon/admin/create', async (req, res) => {
         where: { spuId: { [Op.in]: scopeSpuIds } },
         attributes: ['spuId', 'title'],
       });
-      scopeGoods = products.map((item) => {
+      const eligibleProducts = products.filter((item) => isProductEnabledForCouponTemplate(item, template.templateType));
+      if (eligibleProducts.length !== scopeSpuIds.length) {
+        return res.send({ code: -1, message: '所选商品包含不适用于该优惠券的商品，请重新选择' });
+      }
+      scopeGoods = eligibleProducts.map((item) => {
         const data = typeof item.toJSON === 'function' ? item.toJSON() : item;
         return { spuId: data.spuId, title: data.title };
       });
@@ -2880,6 +2902,60 @@ app.get('/api/admin/coupon-templates', adminAuth, async (req, res) => {
       order: [['sort', 'DESC'], ['createdAt', 'ASC']],
     });
     res.send({ code: 0, data: templates.map(formatCouponTemplate) });
+  } catch (err) {
+    res.send({ code: -1, message: err.message });
+  }
+});
+
+app.get('/api/admin/coupon-product-eligibility', adminAuth, async (req, res) => {
+  try {
+    const products = await Product.findAll({
+      order: [['sort', 'DESC'], ['createdAt', 'DESC']],
+      attributes: ['spuId', 'title', 'status', 'couponTemplateTypes'],
+    });
+    res.send({
+      code: 0,
+      data: {
+        couponTypes: DEFAULT_COUPON_TEMPLATES
+          .filter((item) => SCOPED_DISCOUNT_TEMPLATE_TYPES.includes(item.templateType))
+          .map((item) => ({ templateType: item.templateType, title: item.title })),
+        products: products.map((product) => {
+          const item = typeof product.toJSON === 'function' ? product.toJSON() : product;
+          return {
+            spuId: item.spuId,
+            title: item.title,
+            status: item.status,
+            couponTemplateTypes: normalizeCouponTemplateTypes(item.couponTemplateTypes, { useDefaultWhenMissing: true }),
+          };
+        }),
+      },
+    });
+  } catch (err) {
+    res.send({ code: -1, message: err.message });
+  }
+});
+
+app.post('/api/admin/coupon-product-eligibility', adminAuth, async (req, res) => {
+  try {
+    const products = Array.isArray(req.body?.products) ? req.body.products : [];
+    const entries = products
+      .map((item) => ({
+        spuId: String(item?.spuId || '').trim(),
+        couponTemplateTypes: normalizeCouponTemplateTypes(item?.couponTemplateTypes || []),
+      }))
+      .filter((item) => item.spuId);
+    const spuIds = Array.from(new Set(entries.map((item) => item.spuId)));
+    if (spuIds.length !== entries.length) return res.send({ code: -1, message: '商品配置存在重复项' });
+
+    const existingProducts = await Product.findAll({ where: { spuId: { [Op.in]: spuIds } } });
+    if (existingProducts.length !== entries.length) return res.send({ code: -1, message: '存在未找到的商品，无法保存配置' });
+    const configurationMap = new Map(entries.map((item) => [item.spuId, item.couponTemplateTypes]));
+    await Product.sequelize.transaction(async (transaction) => {
+      await Promise.all(existingProducts.map((product) => product.update({
+        couponTemplateTypes: configurationMap.get(product.spuId),
+      }, { transaction })));
+    });
+    res.send({ code: 0, data: { updatedCount: entries.length } });
   } catch (err) {
     res.send({ code: -1, message: err.message });
   }
@@ -3453,6 +3529,7 @@ app.post('/api/home/banners/seed', async (req, res) => {
 app.get('/api/products', async (req, res) => {
   try {
     const keyword = String(req.query.keyword || req.query.keywords || '').trim();
+    const couponTemplateType = String(req.query.couponTemplateType || '').trim();
     const where = { status: 1 };
     const isForAudit = Object.prototype.hasOwnProperty.call(process.env, 'forAudit');
 
@@ -3486,12 +3563,15 @@ app.get('/api/products', async (req, res) => {
         'detailPicLength',
         'usePicture',
         'pictureSpuId',
+        'couponTemplateTypes',
       ],
     };
     if (isForAudit) findOptions.limit = 2;
 
     const products = await Product.findAll(findOptions);
-    const data = products.map(withCloudProductPictures);
+    const data = products
+      .map(withCloudProductPictures)
+      .filter((product) => !couponTemplateType || isProductEnabledForCouponTemplate(product, couponTemplateType));
     res.send({ code: 0, data });
   } catch (err) {
     res.send({ code: -1, message: err.message });
