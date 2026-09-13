@@ -174,19 +174,45 @@ const DEFAULT_COUPON_TEMPLATES = [
 const SCOPED_DISCOUNT_TEMPLATE_TYPES = DEFAULT_COUPON_TEMPLATES
   .filter((item) => item.ruleType === 'discount')
   .map((item) => item.templateType);
+const EXPERIENCE_TEMPLATE_TYPE = 'third_gen_16s_experience';
+const CONFIGURABLE_PRODUCT_COUPON_TEMPLATE_TYPES = [
+  ...SCOPED_DISCOUNT_TEMPLATE_TYPES,
+  EXPERIENCE_TEMPLATE_TYPE,
+];
+const DEFAULT_EXPERIENCE_SCOPE_SPU_IDS = new Set(
+  (DEFAULT_COUPON_TEMPLATES.find((item) => item.templateType === EXPERIENCE_TEMPLATE_TYPE)
+    ?.meta?.scopeSpuIds || [])
+    .map((item) => String(item || '').trim())
+    .filter(Boolean),
+);
 
 const normalizeCouponTemplateTypes = (templateTypes, { useDefaultWhenMissing = false } = {}) => {
   if (!Array.isArray(templateTypes)) {
-    return useDefaultWhenMissing ? [...SCOPED_DISCOUNT_TEMPLATE_TYPES] : null;
+    return useDefaultWhenMissing ? [...CONFIGURABLE_PRODUCT_COUPON_TEMPLATE_TYPES] : null;
   }
   return Array.from(new Set(templateTypes
     .map((item) => String(item || '').trim())
-    .filter((item) => SCOPED_DISCOUNT_TEMPLATE_TYPES.includes(item))));
+    .filter((item) => CONFIGURABLE_PRODUCT_COUPON_TEMPLATE_TYPES.includes(item))));
 };
 
 const isProductEnabledForCouponTemplate = (product = {}, templateType = '') => {
   const configuredTemplateTypes = normalizeCouponTemplateTypes(product.couponTemplateTypes);
-  return configuredTemplateTypes === null || configuredTemplateTypes.includes(String(templateType || '').trim());
+  const normalizedTemplateType = String(templateType || '').trim();
+  if (configuredTemplateTypes !== null) return configuredTemplateTypes.includes(normalizedTemplateType);
+  if (normalizedTemplateType === EXPERIENCE_TEMPLATE_TYPE) {
+    return DEFAULT_EXPERIENCE_SCOPE_SPU_IDS.has(String(product.spuId || '').trim());
+  }
+  return SCOPED_DISCOUNT_TEMPLATE_TYPES.includes(normalizedTemplateType);
+};
+
+const getEffectiveProductCouponTemplateTypes = (product = {}) => {
+  const configuredTemplateTypes = normalizeCouponTemplateTypes(product.couponTemplateTypes);
+  if (configuredTemplateTypes !== null) return configuredTemplateTypes;
+  const templateTypes = [...SCOPED_DISCOUNT_TEMPLATE_TYPES];
+  if (DEFAULT_EXPERIENCE_SCOPE_SPU_IDS.has(String(product.spuId || '').trim())) {
+    templateTypes.push(EXPERIENCE_TEMPLATE_TYPE);
+  }
+  return templateTypes;
 };
 
 const normalizeCouponTemplate = (template = {}) => {
@@ -2536,7 +2562,7 @@ app.post('/api/coupon/admin/create', async (req, res) => {
 
     const template = await getActiveCouponTemplate(req.body?.templateType);
     if (!template) return res.send({ code: -1, message: '未知优惠券类型' });
-    const scopeSpuIds = Array.isArray(req.body?.scopeSpuIds)
+    let scopeSpuIds = Array.isArray(req.body?.scopeSpuIds)
       ? Array.from(new Set(req.body.scopeSpuIds.map((item) => String(item || '').trim()).filter(Boolean)))
       : [];
     let scopeGoods = [];
@@ -2557,6 +2583,18 @@ app.post('/api/coupon/admin/create', async (req, res) => {
         return res.send({ code: -1, message: '所选适用商品不存在' });
       }
     }
+    if (template.templateType === EXPERIENCE_TEMPLATE_TYPE) {
+      const products = await Product.findAll({
+        attributes: ['spuId', 'title', 'couponTemplateTypes'],
+      });
+      scopeGoods = products
+        .filter((item) => isProductEnabledForCouponTemplate(item, template.templateType))
+        .map((item) => {
+          const data = typeof item.toJSON === 'function' ? item.toJSON() : item;
+          return { spuId: data.spuId, title: data.title };
+        });
+      scopeSpuIds = scopeGoods.map((item) => item.spuId);
+    }
 
     const couponNo = buildCouponNo();
     const coupon = await CouponRecord.create({
@@ -2572,6 +2610,8 @@ app.post('/api/coupon/admin/create', async (req, res) => {
         scopeGoods,
         meta: {
           ...(template.meta || {}),
+          scopeSpuIds,
+          scopeGoods,
           ...(template.ruleType === 'experience_price'
             ? { experienceShared: req.body?.experienceShared !== false }
             : {}),
@@ -2917,7 +2957,7 @@ app.get('/api/admin/coupon-product-eligibility', adminAuth, async (req, res) => 
       code: 0,
       data: {
         couponTypes: DEFAULT_COUPON_TEMPLATES
-          .filter((item) => SCOPED_DISCOUNT_TEMPLATE_TYPES.includes(item.templateType))
+          .filter((item) => CONFIGURABLE_PRODUCT_COUPON_TEMPLATE_TYPES.includes(item.templateType))
           .map((item) => ({ templateType: item.templateType, title: item.title })),
         products: products.map((product) => {
           const item = typeof product.toJSON === 'function' ? product.toJSON() : product;
@@ -2925,7 +2965,7 @@ app.get('/api/admin/coupon-product-eligibility', adminAuth, async (req, res) => 
             spuId: item.spuId,
             title: item.title,
             status: item.status,
-            couponTemplateTypes: normalizeCouponTemplateTypes(item.couponTemplateTypes, { useDefaultWhenMissing: true }),
+            couponTemplateTypes: getEffectiveProductCouponTemplateTypes(item),
           };
         }),
       },
