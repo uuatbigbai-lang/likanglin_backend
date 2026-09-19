@@ -1532,6 +1532,22 @@ const getWechatAccessToken = async () => {
   return wechatAccessTokenCache.token;
 };
 
+const requestWechatBinary = ({ path: requestPath, data }) => new Promise((resolve, reject) => {
+  const bodyText = JSON.stringify(data || {});
+  const req = https.request({ hostname: 'api.weixin.qq.com', path: requestPath, method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(bodyText) } }, (response) => {
+    const chunks = [];
+    response.on('data', (chunk) => chunks.push(chunk));
+    response.on('end', () => {
+      const buffer = Buffer.concat(chunks);
+      if (response.statusCode >= 200 && response.statusCode < 300 && !String(response.headers['content-type'] || '').includes('application/json')) return resolve(buffer);
+      try { const error = JSON.parse(buffer.toString()); reject(new Error(error.errmsg || `微信小程序码生成失败：${error.errcode || response.statusCode}`)); } catch (err) { reject(new Error(`微信小程序码生成失败：${response.statusCode}`)); }
+    });
+  });
+  req.on('error', reject);
+  req.write(bodyText);
+  req.end();
+});
+
 const getWechatPhoneNumberByCode = async (code) => {
   const normalizedCode = String(code || '').trim();
   if (!normalizedCode) {
@@ -2339,6 +2355,53 @@ app.get('/api/user/sales-profile', async (req, res) => {
         isSales: !!salesProfile,
         salesRoleLabel: salesProfile ? '渠道代理' : '',
         profile: salesProfile,
+      },
+    });
+  } catch (err) {
+    res.send({ code: -1, message: err.message });
+  }
+});
+
+app.get('/api/user/sales/qrcode', async (req, res) => {
+  try {
+    const openid = getRequestOpenid(req);
+    const sales = await SalesProfile.findOne({ where: { openid } });
+    if (!sales) return res.send({ code: -1, message: '仅销售角色可生成邀请二维码' });
+    const accessToken = await getWechatAccessToken();
+    if (!accessToken) return res.send({ code: -1, message: '缺少微信小程序 AppID/AppSecret 配置' });
+    const image = await requestWechatBinary({
+      path: `/wxa/getwxacodeunlimit?access_token=${encodeURIComponent(accessToken)}`,
+      data: { scene: openid, page: 'pages/user/sales-invite/index', check_path: true, env_version: 'release', width: 430 },
+    });
+    res.send({ code: 0, data: { base64: `data:image/png;base64,${image.toString('base64')}` } });
+  } catch (err) { res.send({ code: -1, message: err.message }); }
+});
+
+app.get('/api/sales/invite/:salesOpenid', async (req, res) => {
+  try {
+    const salesOpenid = String(req.params.salesOpenid || '').trim();
+    const sales = await SalesProfile.findOne({ where: { openid: salesOpenid } });
+    if (!sales) return res.send({ code: -1, message: '该邀请销售不存在或已失效' });
+    const user = await User.findOne({ where: { openid: salesOpenid } });
+    res.send({ code: 0, data: { salesName: getSalesDisplayName(sales) || user?.nickName || '蓝点荟顾问', avatarUrl: user?.avatarUrl || DEFAULT_USER_AVATAR } });
+  } catch (err) { res.send({ code: -1, message: err.message }); }
+});
+
+// 销售邀请页仅公开展示销售名称和头像，不返回 openid、手机号等身份信息。
+app.get('/api/sales/invite/:salesOpenid', async (req, res) => {
+  try {
+    const salesOpenid = String(req.params.salesOpenid || '').trim();
+    if (!salesOpenid) return res.send({ code: -1, message: '邀请信息不完整' });
+
+    const salesProfile = await SalesProfile.findOne({ where: { openid: salesOpenid } });
+    if (!salesProfile) return res.send({ code: -1, message: '该邀请销售不存在或已失效' });
+
+    const user = await User.findOne({ where: { openid: salesOpenid } });
+    res.send({
+      code: 0,
+      data: {
+        salesName: getSalesDisplayName(salesProfile) || user?.nickName || '蓝点荟顾问',
+        avatarUrl: user?.avatarUrl || DEFAULT_USER_AVATAR,
       },
     });
   } catch (err) {
