@@ -816,6 +816,28 @@ const CouponTemplate = sequelize.define("CouponTemplate", {
   },
 });
 
+// 优惠券模板与商品的适用关系。包邮门槛按“购买件数大于该值”判断，0 表示购买 1 件即可包邮。
+const CouponProductRelation = sequelize.define("CouponProductRelation", {
+  couponTemplateType: {
+    type: DataTypes.STRING(64),
+    allowNull: false,
+    comment: "优惠券模板标识",
+  },
+  spuId: {
+    type: DataTypes.STRING(64),
+    allowNull: false,
+    comment: "商品SPU编号",
+  },
+  freeShippingMinQuantity: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    defaultValue: 0,
+    comment: "购买件数大于该值时包邮，0 表示购买1件即可包邮",
+  },
+}, {
+  indexes: [{ unique: true, fields: ['couponTemplateType', 'spuId'] }],
+});
+
 const CouponRecord = sequelize.define("CouponRecord", {
   couponNo: {
     type: DataTypes.STRING(64),
@@ -1067,6 +1089,7 @@ const syncModels = [
   UserSalesBinding,
   UserSalesBindingRecord,
   CouponTemplate,
+  CouponProductRelation,
   CouponRecord,
   CouponShareRecord,
   HomeAsset,
@@ -1283,6 +1306,24 @@ async function migrateLegacyUserRemarkNames() {
   }));
 }
 
+// 保留旧字段仅作兼容；首次升级时把已保存的适用商品配置写入新的关联表。
+async function migrateLegacyCouponProductRelations() {
+  const products = await Product.findAll({ attributes: ['spuId', 'couponTemplateTypes'] });
+  const rows = [];
+  products.forEach((product) => {
+    const templateTypes = Array.isArray(product.couponTemplateTypes) ? product.couponTemplateTypes : [];
+    templateTypes.forEach((couponTemplateType) => {
+      const normalizedType = String(couponTemplateType || '').trim();
+      if (normalizedType) rows.push({
+        couponTemplateType: normalizedType,
+        spuId: String(product.spuId || '').trim(),
+        freeShippingMinQuantity: 0,
+      });
+    });
+  });
+  if (rows.length) await CouponProductRelation.bulkCreate(rows, { ignoreDuplicates: true });
+}
+
 // 数据库初始化方法
 async function init() {
   for (const model of syncModels) {
@@ -1293,6 +1334,7 @@ async function init() {
     await ensureOnlineSchema();
   }
   await migrateLegacyUserRemarkNames();
+  await migrateLegacyCouponProductRelations();
 }
 
 // 导出初始化方法和模型
@@ -1311,6 +1353,7 @@ module.exports = {
   UserSalesBinding,
   UserSalesBindingRecord,
   CouponTemplate,
+  CouponProductRelation,
   CouponRecord,
   CouponShareRecord,
   HomeAsset,

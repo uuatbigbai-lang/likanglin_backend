@@ -19,6 +19,7 @@ const {
   UserSalesBinding,
   UserSalesBindingRecord,
   CouponTemplate,
+  CouponProductRelation,
   CouponRecord,
   CouponShareRecord,
   HomeAsset,
@@ -178,6 +179,7 @@ const EXPERIENCE_TEMPLATE_TYPE = 'third_gen_16s_experience';
 const CONFIGURABLE_PRODUCT_COUPON_TEMPLATE_TYPES = [
   ...SCOPED_DISCOUNT_TEMPLATE_TYPES,
   EXPERIENCE_TEMPLATE_TYPE,
+  'employee_special',
 ];
 const DEFAULT_EXPERIENCE_SCOPE_SPU_IDS = new Set(
   (DEFAULT_COUPON_TEMPLATES.find((item) => item.templateType === EXPERIENCE_TEMPLATE_TYPE)
@@ -213,6 +215,26 @@ const getEffectiveProductCouponTemplateTypes = (product = {}) => {
     templateTypes.push(EXPERIENCE_TEMPLATE_TYPE);
   }
   return templateTypes;
+};
+
+const getCouponProductRelationMap = async (couponTemplateType, spuIds = []) => {
+  const normalizedType = String(couponTemplateType || '').trim();
+  const normalizedSpuIds = Array.from(new Set(spuIds.map((item) => String(item || '').trim()).filter(Boolean)));
+  if (!normalizedType || !normalizedSpuIds.length) return new Map();
+  const relations = await CouponProductRelation.findAll({
+    where: { couponTemplateType: normalizedType, spuId: { [Op.in]: normalizedSpuIds } },
+  });
+  return new Map(relations.map((relation) => {
+    const item = typeof relation.toJSON === 'function' ? relation.toJSON() : relation;
+    return [item.spuId, item];
+  }));
+};
+
+const isProductEnabledForCouponTemplateFromRelations = async (product = {}, templateType = '') => {
+  const item = typeof product.toJSON === 'function' ? product.toJSON() : product;
+  const relationMap = await getCouponProductRelationMap(templateType, [item.spuId]);
+  // 尚未迁移的历史商品继续沿用旧配置，避免升级后改变已发券的适用范围。
+  return relationMap.has(String(item.spuId || '').trim()) || isProductEnabledForCouponTemplate(item, templateType);
 };
 
 const normalizeCouponTemplate = (template = {}) => {
@@ -673,10 +695,34 @@ const getEmployeeCouponMonthlyQuotaReason = async (openid, coupon, goodsList = [
   return exceeded.length ? `员工优惠券本月使用次数已达上限：${exceeded.map((item) => `${item.title}（已使用${item.count}/${item.limit}次）`).join('、')}。请取消选择该优惠券` : '';
 };
 
-const getCouponFreight = (coupon, { isOnlyPayment = false } = {}) => {
+const getCouponFreight = async (coupon, goodsList = [], { isOnlyPayment = false } = {}) => {
   const template = getCouponTemplateSnapshot(coupon);
   if (template.templateType !== 'employee_special' || isOnlyPayment) {
     return { amount: 0, snapshot: null };
+  }
+  const relations = await getCouponProductRelationMap(
+    template.templateType,
+    goodsList.map((goods) => goods.spuId),
+  );
+  const freeShippingRelation = (goodsList || []).find((goods) => {
+    const relation = relations.get(String(goods.spuId || '').trim());
+    return relation && Math.max(Number(goods.quantity || goods.buyQuantity || 0), 0)
+      > Math.max(Math.floor(Number(relation.freeShippingMinQuantity || 0)), 0);
+  });
+  if (freeShippingRelation) {
+    const relation = relations.get(String(freeShippingRelation.spuId || '').trim());
+    return {
+      amount: 0,
+      snapshot: {
+        ruleType: 'coupon_product_free_shipping',
+        title: '优惠券关联商品包邮',
+        amount: '0',
+        couponNo: coupon.couponNo,
+        couponTemplateType: template.templateType,
+        spuId: freeShippingRelation.spuId,
+        freeShippingMinQuantity: Number(relation.freeShippingMinQuantity || 0),
+      },
+    };
   }
   return {
     amount: EMPLOYEE_COUPON_FREIGHT_FEE,
@@ -1539,8 +1585,19 @@ const requestWechatBinary = ({ path: requestPath, data }) => new Promise((resolv
     response.on('data', (chunk) => chunks.push(chunk));
     response.on('end', () => {
       const buffer = Buffer.concat(chunks);
-      if (response.statusCode >= 200 && response.statusCode < 300 && !String(response.headers['content-type'] || '').includes('application/json')) return resolve(buffer);
-      try { const error = JSON.parse(buffer.toString()); reject(new Error(error.errmsg || `微信小程序码生成失败：${error.errcode || response.statusCode}`)); } catch (err) { reject(new Error(`微信小程序码生成失败：${response.statusCode}`)); }
+      // 微信的小程序码接口即使失败也可能返回 200，且 Content-Type 不一定是 JSON。
+      // 因此优先检查响应体是否为 JSON，不能只依赖响应头判断是否为图片。
+      const responseText = buffer.toString('utf8').trim();
+      if (responseText.startsWith('{')) {
+        try {
+          const error = JSON.parse(responseText);
+          return reject(new Error(error.errmsg || `微信小程序码生成失败：${error.errcode || response.statusCode}`));
+        } catch (err) {
+          return reject(new Error('微信小程序码接口返回了无法解析的 JSON 错误'));
+        }
+      }
+      if (response.statusCode >= 200 && response.statusCode < 300) return resolve(buffer);
+      reject(new Error(`微信小程序码生成失败：${response.statusCode}`));
     });
   });
   req.on('error', reject);
@@ -2634,7 +2691,10 @@ app.post('/api/coupon/admin/create', async (req, res) => {
         where: { spuId: { [Op.in]: scopeSpuIds } },
         attributes: ['spuId', 'title'],
       });
-      const eligibleProducts = products.filter((item) => isProductEnabledForCouponTemplate(item, template.templateType));
+      const enabledFlags = await Promise.all(products.map((item) => (
+        isProductEnabledForCouponTemplateFromRelations(item, template.templateType)
+      )));
+      const eligibleProducts = products.filter((_, index) => enabledFlags[index]);
       if (eligibleProducts.length !== scopeSpuIds.length) {
         return res.send({ code: -1, message: '所选商品包含不适用于该优惠券的商品，请重新选择' });
       }
@@ -2650,8 +2710,11 @@ app.post('/api/coupon/admin/create', async (req, res) => {
       const products = await Product.findAll({
         attributes: ['spuId', 'title', 'couponTemplateTypes'],
       });
+      const enabledFlags = await Promise.all(products.map((item) => (
+        isProductEnabledForCouponTemplateFromRelations(item, template.templateType)
+      )));
       scopeGoods = products
-        .filter((item) => isProductEnabledForCouponTemplate(item, template.templateType))
+        .filter((_, index) => enabledFlags[index])
         .map((item) => {
           const data = typeof item.toJSON === 'function' ? item.toJSON() : item;
           return { spuId: data.spuId, title: data.title };
@@ -3016,19 +3079,39 @@ app.get('/api/admin/coupon-product-eligibility', adminAuth, async (req, res) => 
       order: [['sort', 'DESC'], ['createdAt', 'DESC']],
       attributes: ['spuId', 'title', 'status', 'couponTemplateTypes'],
     });
+    const couponTypes = DEFAULT_COUPON_TEMPLATES
+      .filter((item) => CONFIGURABLE_PRODUCT_COUPON_TEMPLATE_TYPES.includes(item.templateType))
+      .map((item) => ({ templateType: item.templateType, title: item.title }));
+    const relations = await CouponProductRelation.findAll({
+      where: { couponTemplateType: { [Op.in]: couponTypes.map((item) => item.templateType) } },
+    });
+    const relationMap = new Map(relations.map((relation) => {
+      const item = typeof relation.toJSON === 'function' ? relation.toJSON() : relation;
+      return [`${item.spuId}::${item.couponTemplateType}`, item];
+    }));
     res.send({
       code: 0,
       data: {
-        couponTypes: DEFAULT_COUPON_TEMPLATES
-          .filter((item) => CONFIGURABLE_PRODUCT_COUPON_TEMPLATE_TYPES.includes(item.templateType))
-          .map((item) => ({ templateType: item.templateType, title: item.title })),
+        couponTypes,
         products: products.map((product) => {
           const item = typeof product.toJSON === 'function' ? product.toJSON() : product;
+          const legacyTypes = getEffectiveProductCouponTemplateTypes(item);
+          const couponRelations = couponTypes
+            .map((couponType) => relationMap.get(`${item.spuId}::${couponType.templateType}`))
+            .filter(Boolean);
           return {
             spuId: item.spuId,
             title: item.title,
             status: item.status,
-            couponTemplateTypes: getEffectiveProductCouponTemplateTypes(item),
+            couponTemplateTypes: couponRelations.length
+              ? couponRelations.map((relation) => relation.couponTemplateType)
+              : legacyTypes,
+            couponRelations: couponRelations.length
+              ? couponRelations.map((relation) => ({
+                templateType: relation.couponTemplateType,
+                freeShippingMinQuantity: Number(relation.freeShippingMinQuantity || 0),
+              }))
+              : legacyTypes.map((templateType) => ({ templateType, freeShippingMinQuantity: 0 })),
           };
         }),
       },
@@ -3042,21 +3125,39 @@ app.post('/api/admin/coupon-product-eligibility', adminAuth, async (req, res) =>
   try {
     const products = Array.isArray(req.body?.products) ? req.body.products : [];
     const entries = products
-      .map((item) => ({
-        spuId: String(item?.spuId || '').trim(),
-        couponTemplateTypes: normalizeCouponTemplateTypes(item?.couponTemplateTypes || []),
-      }))
+      .map((item) => {
+        const couponRelations = Array.isArray(item?.couponRelations) ? item.couponRelations : [];
+        const relationMap = new Map(couponRelations.map((relation) => [
+          String(relation?.templateType || '').trim(),
+          Math.max(Math.floor(Number(relation?.freeShippingMinQuantity || 0)), 0),
+        ]));
+        const couponTemplateTypes = normalizeCouponTemplateTypes(item?.couponTemplateTypes || []);
+        return {
+          spuId: String(item?.spuId || '').trim(),
+          couponTemplateTypes,
+          couponRelations: couponTemplateTypes.map((templateType) => ({
+            couponTemplateType: templateType,
+            freeShippingMinQuantity: relationMap.get(templateType) || 0,
+          })),
+        };
+      })
       .filter((item) => item.spuId);
     const spuIds = Array.from(new Set(entries.map((item) => item.spuId)));
     if (spuIds.length !== entries.length) return res.send({ code: -1, message: '商品配置存在重复项' });
 
     const existingProducts = await Product.findAll({ where: { spuId: { [Op.in]: spuIds } } });
     if (existingProducts.length !== entries.length) return res.send({ code: -1, message: '存在未找到的商品，无法保存配置' });
-    const configurationMap = new Map(entries.map((item) => [item.spuId, item.couponTemplateTypes]));
+    const configurationMap = new Map(entries.map((item) => [item.spuId, item]));
     await Product.sequelize.transaction(async (transaction) => {
       await Promise.all(existingProducts.map((product) => product.update({
-        couponTemplateTypes: configurationMap.get(product.spuId),
+        couponTemplateTypes: configurationMap.get(product.spuId).couponTemplateTypes,
       }, { transaction })));
+      await CouponProductRelation.destroy({ where: { spuId: { [Op.in]: spuIds } }, transaction });
+      const relations = entries.flatMap((item) => item.couponRelations.map((relation) => ({
+        ...relation,
+        spuId: item.spuId,
+      })));
+      if (relations.length) await CouponProductRelation.bulkCreate(relations, { transaction });
     });
     res.send({ code: 0, data: { updatedCount: entries.length } });
   } catch (err) {
@@ -3672,9 +3773,13 @@ app.get('/api/products', async (req, res) => {
     if (isForAudit) findOptions.limit = 2;
 
     const products = await Product.findAll(findOptions);
-    const data = products
-      .map(withCloudProductPictures)
-      .filter((product) => !couponTemplateType || isProductEnabledForCouponTemplate(product, couponTemplateType));
+    const displayedProducts = products.map(withCloudProductPictures);
+    const enabledFlags = couponTemplateType
+      ? await Promise.all(displayedProducts.map((product) => (
+        isProductEnabledForCouponTemplateFromRelations(product, couponTemplateType)
+      )))
+      : displayedProducts.map(() => true);
+    const data = displayedProducts.filter((_, index) => enabledFlags[index]);
     res.send({ code: 0, data });
   } catch (err) {
     res.send({ code: -1, message: err.message });
@@ -4387,18 +4492,25 @@ app.post('/api/order/settle', async (req, res) => {
       coupon,
       amount: calculateCouponDiscount(coupon, skuDetailVos, totalSalePrice),
       quotaReason: await getEmployeeCouponMonthlyQuotaReason(openid, coupon, skuDetailVos),
+      freight: await getCouponFreight(coupon, skuDetailVos, { isOnlyPayment: !!isOnlyPayment }),
     })));
     const selectedCoupon = requestedCouponNo
       ? (couponCandidates.find((item) => item.amount > 0 && !item.quotaReason) || null)
       : (couponCandidates.find((item) => item.amount > 0 && !item.quotaReason) || null);
     const totalCouponAmount = selectedCoupon ? selectedCoupon.amount : 0;
     const freight = selectedCoupon
-      ? getCouponFreight(selectedCoupon.coupon, { isOnlyPayment: !!isOnlyPayment })
+      ? selectedCoupon.freight
       : { amount: 0, snapshot: null };
     const totalPayAmount = Math.max(totalSalePrice - totalCouponAmount + freight.amount, 1);
-    const settleCouponList = couponCandidates.map(({ coupon, amount, quotaReason }) => {
+    const settleCouponList = couponCandidates.map(({ coupon, amount, quotaReason, freight: candidateFreight }) => {
       const formatted = formatCouponRecord(coupon);
       const isUsable = amount > 0 && !quotaReason;
+      const template = getCouponTemplateSnapshot(coupon);
+      const shippingTip = template.templateType === 'employee_special'
+        ? (candidateFreight.amount === 0 && candidateFreight.snapshot?.ruleType === 'coupon_product_free_shipping'
+          ? `已满足关联商品包邮条件（购买件数 > ${candidateFreight.snapshot.freeShippingMinQuantity}）`
+          : `未满足关联商品包邮条件，下单将加收${(EMPLOYEE_COUPON_FREIGHT_FEE / 100).toFixed(0)}元快递费`)
+        : '';
       return {
         ...formatted,
         status: isUsable ? formatted.status : 'unavailable',
@@ -4406,6 +4518,7 @@ app.post('/api/order/settle', async (req, res) => {
         discountAmount: String(amount),
         unavailableReason: isUsable ? '' : (quotaReason || getCouponUnavailableReason(coupon, skuDetailVos)),
         desc: isUsable ? formatted.desc : (quotaReason || getCouponUnavailableReason(coupon, skuDetailVos)),
+        shippingTip,
       };
     });
 
@@ -5413,7 +5526,7 @@ app.post('/api/order/create', async (req, res) => {
     }
     const couponAmount = selectedCoupon ? selectedCoupon.amount : 0;
     const freight = selectedCoupon
-      ? getCouponFreight(selectedCoupon.coupon, { isOnlyPayment: !!isOnlyPayment })
+      ? await getCouponFreight(selectedCoupon.coupon, pricedGoodsList, { isOnlyPayment: !!isOnlyPayment })
       : { amount: 0, snapshot: null };
     const paymentAmount = Math.max(calcTotal - couponAmount + freight.amount, 1);
     const couponSnapshot = selectedCoupon

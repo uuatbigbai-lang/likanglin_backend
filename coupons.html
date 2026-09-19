@@ -142,6 +142,12 @@
       margin: 0;
       accent-color: #2472c8;
     }
+    .shipping-threshold {
+      width: 84px;
+      min-height: 32px;
+      padding: 5px 7px;
+      font-size: 13px;
+    }
     .inline-form {
       display: grid;
       grid-template-columns: minmax(0, 1fr) minmax(0, 0.75fr);
@@ -278,8 +284,8 @@
     <section class="panel admin-card" style="margin-bottom:16px">
       <div class="card-head">
         <div>
-          <h2>商品适用券配置</h2>
-          <div class="small" style="margin-top:4px">控制 8/7/5 折券的候选商品，以及 16S 检测体验券的适用商品。未保存配置的历史商品保留原有默认范围。</div>
+          <h2>优惠券-商品关联与包邮配置</h2>
+          <div class="small" style="margin-top:4px">勾选即建立优惠券与商品的关联；填写“购买件数 &gt; N 时包邮”。N 为 0 表示购买 1 件即可包邮。员工特别优惠满足关联商品的包邮门槛时免收 15 元快递费。</div>
         </div>
         <div class="auth-actions">
           <button id="refreshCouponProductEligibility" class="subtle" type="button">刷新</button>
@@ -477,7 +483,9 @@
         return `<tr>
           <td><strong>${escapeHtml(product.title || '-')}</strong>${Number(product.status) !== 1 ? '<div class="small">已下架</div>' : ''}</td>
           <td>${escapeHtml(product.spuId)}</td>
-          ${couponTypes.map((couponType) => `<td>
+          ${couponTypes.map((couponType) => {
+            const relation = (product.couponRelations || []).find((item) => item.templateType === couponType.templateType);
+            return `<td>
             <input
               class="scope-checkbox"
               type="checkbox"
@@ -486,7 +494,20 @@
               data-template-type="${escapeHtml(couponType.templateType)}"
               ${selectedTypes.has(couponType.templateType) ? 'checked' : ''}
             >
-          </td>`).join('')}
+            <label class="small" style="margin:6px 0 0;font-weight:400">件数 &gt;</label>
+            <input
+              class="shipping-threshold"
+              type="number"
+              min="0"
+              step="1"
+              aria-label="${escapeHtml(product.title)} 使用 ${escapeHtml(couponType.title)} 时的包邮件数门槛"
+              data-spu-id="${escapeHtml(product.spuId)}"
+              data-template-type="${escapeHtml(couponType.templateType)}"
+              value="${Number(relation?.freeShippingMinQuantity || 0)}"
+              ${selectedTypes.has(couponType.templateType) ? '' : 'disabled'}
+            >
+          </td>`;
+          }).join('')}
         </tr>`;
       }).join('') : '<tr><td colspan="10" class="empty">暂无商品</td></tr>';
     }
@@ -515,6 +536,7 @@
             products: products.map((item) => ({
               spuId: item.spuId,
               couponTemplateTypes: item.couponTemplateTypes || [],
+              couponRelations: item.couponRelations || [],
             })),
           }),
         });
@@ -627,6 +649,24 @@
       if (target.checked) selectedTypes.add(target.dataset.templateType);
       else selectedTypes.delete(target.dataset.templateType);
       product.couponTemplateTypes = Array.from(selectedTypes);
+      const relations = new Map((product.couponRelations || []).map((item) => [item.templateType, item]));
+      if (target.checked && !relations.has(target.dataset.templateType)) {
+        relations.set(target.dataset.templateType, { templateType: target.dataset.templateType, freeShippingMinQuantity: 0 });
+      }
+      if (!target.checked) relations.delete(target.dataset.templateType);
+      product.couponRelations = Array.from(relations.values());
+      renderCouponProductEligibility();
+    });
+
+    $('couponProductEligibilityBody').addEventListener('input', (event) => {
+      const target = event.target.closest('.shipping-threshold');
+      if (!target) return;
+      const product = (state.couponProductEligibility.products || []).find((item) => item.spuId === target.dataset.spuId);
+      if (!product) return;
+      const value = Math.max(Math.floor(Number(target.value || 0)), 0);
+      const relations = new Map((product.couponRelations || []).map((item) => [item.templateType, item]));
+      relations.set(target.dataset.templateType, { templateType: target.dataset.templateType, freeShippingMinQuantity: value });
+      product.couponRelations = Array.from(relations.values());
     });
 
     $('refreshCouponProductEligibility').addEventListener('click', async () => {
