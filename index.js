@@ -3287,19 +3287,79 @@ const buildInviteSceneStats = (orders = [], bindings = []) => {
   bindings.forEach((binding) => {
     const scene = String(binding.scene || '').trim();
     if (!scene) return;
-    const current = stats.get(scene) || { registeredUserCount: 0, orderCount: 0, performanceAmount: 0 };
+    const current = stats.get(scene) || {
+      registeredUserCount: 0, orderCount: 0, soldQuantity: 0, performanceAmount: 0,
+    };
     current.registeredUserCount += 1;
     stats.set(scene, current);
   });
   orders.forEach((order) => {
     const scene = String(order.inviteScene || '').trim();
     if (!scene) return;
-    const current = stats.get(scene) || { registeredUserCount: 0, orderCount: 0, performanceAmount: 0 };
+    const current = stats.get(scene) || {
+      registeredUserCount: 0, orderCount: 0, soldQuantity: 0, performanceAmount: 0,
+    };
+    const goodsList = Array.isArray(order.goodsList) ? order.goodsList : [];
     current.orderCount += 1;
+    current.soldQuantity += goodsList.reduce(
+      (sum, goods) => sum + Math.max(Number(goods.quantity || goods.buyQuantity || 1), 0),
+      0,
+    );
     current.performanceAmount += Math.max(Number(order.paymentAmount || order.totalAmount || 0), 0);
     stats.set(scene, current);
   });
   return stats;
+};
+
+const buildBoundUsersForInviteScene = async (scene) => {
+  const normalizedScene = String(scene || '').trim();
+  if (!normalizedScene) return [];
+  const bindings = await UserInviteSceneBinding.findAll({
+    where: { scene: normalizedScene },
+    order: [['boundAt', 'DESC'], ['updatedAt', 'DESC']],
+  });
+  const userOpenids = bindings.map((item) => String(item.userOpenid || '').trim()).filter(Boolean);
+  if (!userOpenids.length) return [];
+
+  const [users, orders, salesBindings] = await Promise.all([
+    User.findAll({
+      attributes: ['openid', 'nickName', 'phoneNumber', 'remarkName', 'createdAt', 'updatedAt'],
+      where: { openid: { [Op.in]: userOpenids } },
+    }),
+    Order.findAll({
+      attributes: ['openid', 'userName', 'createdAt', 'updatedAt'],
+      where: { openid: { [Op.in]: userOpenids }, userName: { [Op.ne]: null } },
+      order: [['createdAt', 'DESC'], ['updatedAt', 'DESC']],
+    }),
+    UserSalesBinding.findAll({
+      attributes: ['userOpenid', 'salesOpenid', 'salesNameSnapshot'],
+      where: { userOpenid: { [Op.in]: userOpenids } },
+    }),
+  ]);
+  const userMap = new Map(users.map((user) => [String(user.openid || '').trim(), user]));
+  const latestUserNameMap = new Map();
+  orders.forEach((order) => {
+    const openid = String(order.openid || '').trim();
+    const userName = String(order.userName || '').trim();
+    if (openid && userName && !latestUserNameMap.has(openid)) latestUserNameMap.set(openid, userName);
+  });
+  const salesBindingMap = new Map(salesBindings.map((binding) => [String(binding.userOpenid || '').trim(), binding]));
+
+  return bindings.map((binding) => {
+    const openid = String(binding.userOpenid || '').trim();
+    const user = userMap.get(openid) || {};
+    const salesBinding = salesBindingMap.get(openid) || {};
+    return {
+      openid,
+      nickName: String(user.nickName || '').trim(),
+      userName: latestUserNameMap.get(openid) || '',
+      phoneNumber: String(user.phoneNumber || '').trim(),
+      customerRemarkName: String(user.remarkName || '').trim(),
+      boundAt: binding.boundAt || null,
+      salesOpenid: String(salesBinding.salesOpenid || '').trim(),
+      salesName: String(salesBinding.salesNameSnapshot || '').trim(),
+    };
+  });
 };
 
 const createInviteSceneCode = () => `iq_${crypto.randomBytes(12).toString('hex')}`;
@@ -3320,7 +3380,7 @@ app.get('/api/admin/invite-scenes', adminAuth, async (req, res) => {
       InviteScene.findAll({ order: [['createdAt', 'DESC']] }),
       UserInviteSceneBinding.findAll({ attributes: ['scene'] }),
       Order.findAll({
-        attributes: ['inviteScene', 'paymentAmount', 'totalAmount'],
+        attributes: ['inviteScene', 'paymentAmount', 'totalAmount', 'goodsList'],
         where: {
           inviteScene: { [Op.ne]: null },
           orderStatus: { [Op.in]: [10, 40, 50, ORDER_STATUS_RETURNING] },
@@ -3330,7 +3390,12 @@ app.get('/api/admin/invite-scenes', adminAuth, async (req, res) => {
     const stats = buildInviteSceneStats(orders, bindings);
     res.send({ code: 0, data: items.map((item) => {
       const data = typeof item.toJSON === 'function' ? item.toJSON() : item;
-      return { ...data, ...(stats.get(data.scene) || { registeredUserCount: 0, orderCount: 0, performanceAmount: 0 }) };
+      return {
+        ...data,
+        ...(stats.get(data.scene) || {
+          registeredUserCount: 0, orderCount: 0, soldQuantity: 0, performanceAmount: 0,
+        }),
+      };
     }) });
   } catch (err) {
     res.send({ code: -1, message: err.message });
@@ -3363,6 +3428,17 @@ app.post('/api/admin/invite-scenes', adminAuth, async (req, res) => {
       await item.destroy();
       throw err;
     }
+  } catch (err) {
+    res.send({ code: -1, message: err.message });
+  }
+});
+
+app.get('/api/admin/invite-scenes/:scene/bound-users', adminAuth, async (req, res) => {
+  try {
+    const scene = String(req.params.scene || '').trim();
+    const item = await InviteScene.findOne({ where: { scene } });
+    if (!item) return res.send({ code: -1, message: '推广二维码不存在' });
+    res.send({ code: 0, data: await buildBoundUsersForInviteScene(scene) });
   } catch (err) {
     res.send({ code: -1, message: err.message });
   }
