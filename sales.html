@@ -540,7 +540,8 @@
           body: JSON.stringify({ userOpenid: user.openid, salesOpenid }),
         });
         closeReassignBoundUserModal();
-        showNotice(`已将客户绑定到 ${json.data.salesName || salesName || salesOpenid}`);
+        const reallocatedOrderCount = Number(json.data?.reallocatedOrderCount || 0);
+        showNotice(`已将客户绑定到 ${json.data.salesName || salesName || salesOpenid}；已同步 ${reallocatedOrderCount} 笔订单的销售归属，当前列表已刷新。`);
         const previousSales = state.activeSalesBoundUsers;
         await Promise.all([loadSales(), loadBindings()]);
         if (previousSales?.salesOpenid) {

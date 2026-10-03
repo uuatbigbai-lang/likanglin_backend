@@ -1,5 +1,6 @@
 const path = require('path');
 const https = require('https');
+const crypto = require('crypto');
 const express = require('express');
 const cors = require('cors');
 const morgan = require('morgan');
@@ -18,6 +19,8 @@ const {
   SalesProfile,
   UserSalesBinding,
   UserSalesBindingRecord,
+  InviteScene,
+  UserInviteSceneBinding,
   CouponTemplate,
   CouponProductRelation,
   CouponRecord,
@@ -1166,6 +1169,27 @@ const getBoundSalesForUser = async (userOpenid) => {
     salesOpenid: formattedBinding.salesOpenid,
     salesName,
   };
+};
+
+const getBoundInviteSceneForUser = async (userOpenid) => {
+  const openid = String(userOpenid || '').trim();
+  if (!openid || openid === 'local_dev_user') return '';
+  const binding = await UserInviteSceneBinding.findOne({ where: { userOpenid: openid } });
+  return String(binding?.scene || '').trim();
+};
+
+const bindInviteSceneForUser = async ({ userOpenid, scene }) => {
+  const normalizedUserOpenid = String(userOpenid || '').trim();
+  const normalizedScene = String(scene || '').trim();
+  if (!normalizedUserOpenid || normalizedUserOpenid === 'local_dev_user') {
+    return { bound: false, reason: 'missing-user' };
+  }
+  const inviteScene = await InviteScene.findOne({ where: { scene: normalizedScene } });
+  if (!inviteScene) return { bound: false, reason: 'invalid-scene' };
+
+  const now = new Date();
+  await UserInviteSceneBinding.upsert({ userOpenid: normalizedUserOpenid, scene: normalizedScene, boundAt: now });
+  return { bound: true, scene: normalizedScene, boundAt: now };
 };
 
 const getRequestOpenid = (req) => String(req.headers['x-wx-openid'] || '').trim() || 'local_dev_user';
@@ -2347,6 +2371,10 @@ app.get('/admin/sales', (req, res) => {
 app.get('/admin/customers', (req, res) => {
   res.sendFile(path.join(__dirname, 'customers.html'));
 });
+
+app.get('/admin/invite-scenes', (req, res) => {
+  res.sendFile(path.join(__dirname, 'invite-scenes.html'));
+});
 registerAdminAuthRoutes({ app, AdminAccount, adminAuth });
 
 // 小程序调用，获取微信 Open ID
@@ -2378,7 +2406,10 @@ app.post('/api/user/auto-login', async (req, res) => {
       await user.update({ updatedAt: new Date() });
     }
 
-    const boundSales = await getBoundSalesForUser(openid);
+    const [boundSales, inviteScene] = await Promise.all([
+      getBoundSalesForUser(openid),
+      getBoundInviteSceneForUser(openid),
+    ]);
     const currentSalesProfile = await buildSalesProfileWithStats(openid);
     const formattedUserInfo = formatUserInfo(user);
 
@@ -2394,6 +2425,7 @@ app.post('/api/user/auto-login', async (req, res) => {
         },
         isNewUser: created,
         boundSales: boundSales?.bindingInfo || null,
+        inviteScene,
       },
     });
   } catch (err) {
@@ -2428,42 +2460,10 @@ app.get('/api/user/sales/qrcode', async (req, res) => {
     if (!accessToken) return res.send({ code: -1, message: '缺少微信小程序 AppID/AppSecret 配置' });
     const image = await requestWechatBinary({
       path: `/wxa/getwxacodeunlimit?access_token=${encodeURIComponent(accessToken)}`,
-      data: { scene: openid, page: 'pages/user/sales-invite/index', check_path: true, env_version: 'release', width: 430 },
+      data: { scene: openid, page: 'pages/home/home', check_path: true, env_version: 'release', width: 430 },
     });
     res.send({ code: 0, data: { base64: `data:image/png;base64,${image.toString('base64')}` } });
   } catch (err) { res.send({ code: -1, message: err.message }); }
-});
-
-app.get('/api/sales/invite/:salesOpenid', async (req, res) => {
-  try {
-    const salesOpenid = String(req.params.salesOpenid || '').trim();
-    const sales = await SalesProfile.findOne({ where: { openid: salesOpenid } });
-    if (!sales) return res.send({ code: -1, message: '该邀请销售不存在或已失效' });
-    const user = await User.findOne({ where: { openid: salesOpenid } });
-    res.send({ code: 0, data: { salesName: getSalesDisplayName(sales) || user?.nickName || '蓝点荟顾问', avatarUrl: user?.avatarUrl || DEFAULT_USER_AVATAR } });
-  } catch (err) { res.send({ code: -1, message: err.message }); }
-});
-
-// 销售邀请页仅公开展示销售名称和头像，不返回 openid、手机号等身份信息。
-app.get('/api/sales/invite/:salesOpenid', async (req, res) => {
-  try {
-    const salesOpenid = String(req.params.salesOpenid || '').trim();
-    if (!salesOpenid) return res.send({ code: -1, message: '邀请信息不完整' });
-
-    const salesProfile = await SalesProfile.findOne({ where: { openid: salesOpenid } });
-    if (!salesProfile) return res.send({ code: -1, message: '该邀请销售不存在或已失效' });
-
-    const user = await User.findOne({ where: { openid: salesOpenid } });
-    res.send({
-      code: 0,
-      data: {
-        salesName: getSalesDisplayName(salesProfile) || user?.nickName || '蓝点荟顾问',
-        avatarUrl: user?.avatarUrl || DEFAULT_USER_AVATAR,
-      },
-    });
-  } catch (err) {
-    res.send({ code: -1, message: err.message });
-  }
 });
 
 app.get('/api/user/avatar/:openid', async (req, res) => {
@@ -2658,6 +2658,22 @@ app.post('/api/user/sales/bind', async (req, res) => {
     res.send({ code: 0, data: result });
   } catch (err) {
     console.error('绑定销售失败:', err);
+    res.send({ code: -1, message: err.message });
+  }
+});
+
+// 管理端推广二维码的 scene 绑定；与渠道销售绑定完全独立。
+app.post('/api/user/invite-scenes/bind', async (req, res) => {
+  try {
+    const headerOpenid = req.headers['x-wx-openid'] || '';
+    const { authorizationCode, scene } = req.body || {};
+    const codeOpenid = await getOpenidByCode(authorizationCode);
+    const userOpenid = headerOpenid || codeOpenid || 'local_dev_user';
+    const result = await bindInviteSceneForUser({ userOpenid, scene });
+    if (!result.bound) return res.send({ code: -1, message: '推广二维码无效或用户身份缺失' });
+    res.send({ code: 0, data: result });
+  } catch (err) {
+    console.error('绑定推广二维码失败:', err);
     res.send({ code: -1, message: err.message });
   }
 });
@@ -3266,6 +3282,117 @@ app.get('/api/admin/coupon-admins', adminAuth, async (req, res) => {
   }
 });
 
+const buildInviteSceneStats = (orders = [], bindings = []) => {
+  const stats = new Map();
+  bindings.forEach((binding) => {
+    const scene = String(binding.scene || '').trim();
+    if (!scene) return;
+    const current = stats.get(scene) || { registeredUserCount: 0, orderCount: 0, performanceAmount: 0 };
+    current.registeredUserCount += 1;
+    stats.set(scene, current);
+  });
+  orders.forEach((order) => {
+    const scene = String(order.inviteScene || '').trim();
+    if (!scene) return;
+    const current = stats.get(scene) || { registeredUserCount: 0, orderCount: 0, performanceAmount: 0 };
+    current.orderCount += 1;
+    current.performanceAmount += Math.max(Number(order.paymentAmount || order.totalAmount || 0), 0);
+    stats.set(scene, current);
+  });
+  return stats;
+};
+
+const createInviteSceneCode = () => `iq_${crypto.randomBytes(12).toString('hex')}`;
+
+const generateInviteSceneQrCode = async (scene) => {
+  const accessToken = await getWechatAccessToken();
+  if (!accessToken) throw new Error('缺少微信小程序 AppID/AppSecret 配置');
+  const image = await requestWechatBinary({
+    path: `/wxa/getwxacodeunlimit?access_token=${encodeURIComponent(accessToken)}`,
+    data: { scene, page: 'pages/home/home', check_path: true, env_version: 'release', width: 430 },
+  });
+  return `data:image/png;base64,${image.toString('base64')}`;
+};
+
+app.get('/api/admin/invite-scenes', adminAuth, async (req, res) => {
+  try {
+    const [items, bindings, orders] = await Promise.all([
+      InviteScene.findAll({ order: [['createdAt', 'DESC']] }),
+      UserInviteSceneBinding.findAll({ attributes: ['scene'] }),
+      Order.findAll({
+        attributes: ['inviteScene', 'paymentAmount', 'totalAmount'],
+        where: {
+          inviteScene: { [Op.ne]: null },
+          orderStatus: { [Op.in]: [10, 40, 50, ORDER_STATUS_RETURNING] },
+        },
+      }),
+    ]);
+    const stats = buildInviteSceneStats(orders, bindings);
+    res.send({ code: 0, data: items.map((item) => {
+      const data = typeof item.toJSON === 'function' ? item.toJSON() : item;
+      return { ...data, ...(stats.get(data.scene) || { registeredUserCount: 0, orderCount: 0, performanceAmount: 0 }) };
+    }) });
+  } catch (err) {
+    res.send({ code: -1, message: err.message });
+  }
+});
+
+app.post('/api/admin/invite-scenes', adminAuth, async (req, res) => {
+  try {
+    const remark = String(req.body?.remark || '').trim();
+    if (remark.length > 200) return res.send({ code: -1, message: '备注不能超过200个字符' });
+    const count = await InviteScene.count();
+    if (count >= 1000) return res.send({ code: -1, message: '推广二维码数量已达 1000 个上限' });
+
+    let scene = '';
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const candidate = createInviteSceneCode();
+      // 随机碰撞概率极低，仍显式检查，保证 scene 唯一。
+      if (!(await InviteScene.findOne({ where: { scene: candidate } }))) {
+        scene = candidate;
+        break;
+      }
+    }
+    if (!scene) return res.send({ code: -1, message: '生成唯一 scene 失败，请重试' });
+
+    const item = await InviteScene.create({ scene, remark });
+    try {
+      const qrCode = await generateInviteSceneQrCode(scene);
+      res.send({ code: 0, data: { ...(item.toJSON ? item.toJSON() : item), qrCode } });
+    } catch (err) {
+      await item.destroy();
+      throw err;
+    }
+  } catch (err) {
+    res.send({ code: -1, message: err.message });
+  }
+});
+
+app.get('/api/admin/invite-scenes/:scene/qrcode', adminAuth, async (req, res) => {
+  try {
+    const scene = String(req.params.scene || '').trim();
+    const item = await InviteScene.findOne({ where: { scene } });
+    if (!item) return res.send({ code: -1, message: '推广二维码不存在' });
+    res.send({ code: 0, data: { scene, qrCode: await generateInviteSceneQrCode(scene) } });
+  } catch (err) {
+    res.send({ code: -1, message: err.message });
+  }
+});
+
+app.patch('/api/admin/invite-scenes/:scene', adminAuth, async (req, res) => {
+  try {
+    const scene = String(req.params.scene || '').trim();
+    const remark = String(req.body?.remark || '').trim();
+    if (remark.length > 200) return res.send({ code: -1, message: '备注不能超过200个字符' });
+    const item = await InviteScene.findOne({ where: { scene } });
+    if (!item) return res.send({ code: -1, message: '推广二维码不存在' });
+    await item.update({ remark });
+    res.send({ code: 0, data: item });
+  } catch (err) {
+    res.send({ code: -1, message: err.message });
+  }
+});
+
 app.get('/api/admin/sales', adminAuth, async (req, res) => {
   try {
     const [salesProfiles, orders] = await Promise.all([SalesProfile.findAll({ order: [['createdAt', 'DESC']] }), Order.findAll({
@@ -3409,7 +3536,21 @@ app.post('/api/admin/sales/bindings/reassign', adminAuth, async (req, res) => {
     });
     if (!result.bound) return res.send({ code: -1, message: '客户绑定失败' });
 
-    res.send({ code: 0, data: result });
+    // 销售额按订单归属快照统计。换绑时同步转移该客户原归属销售的订单，
+    // 使 A、B 的订单数、售出数量和销售额与当前客户归属保持一致。
+    const [reallocatedOrderCount] = currentBinding
+      ? await Order.update({
+        salesOpenid,
+        salesNameSnapshot: result.salesName || '',
+      }, {
+        where: {
+          openid: userOpenid,
+          salesOpenid: currentBinding.salesOpenid,
+        },
+      })
+      : [0];
+
+    res.send({ code: 0, data: { ...result, reallocatedOrderCount } });
   } catch (err) {
     res.send({ code: -1, message: err.message });
   }
@@ -4460,7 +4601,10 @@ app.post('/api/order/settle', async (req, res) => {
   try {
     const openid = req.headers['x-wx-openid'] || 'local_dev_user';
     const { goodsRequestList = [], couponList = [], couponNo = '', isOnlyPayment = false } = req.body;
-    const boundSales = await getBoundSalesForUser(openid);
+    const [boundSales, inviteScene] = await Promise.all([
+      getBoundSalesForUser(openid),
+      getBoundInviteSceneForUser(openid),
+    ]);
     const pricedGoodsList = await buildPricedGoodsList(goodsRequestList);
     const requestedCouponNo = getRequestedCouponNo(couponList, couponNo);
     const skuDetailVos = pricedGoodsList.map((item) => ({
@@ -4540,6 +4684,7 @@ app.post('/api/order/settle', async (req, res) => {
         salesOpenid: boundSales?.salesOpenid || '',
         salesNameSnapshot: boundSales?.salesName || '',
         channelAgentName: boundSales?.salesName || '',
+        inviteScene,
         selectedCoupon: selectedCoupon
           ? { ...formatCouponRecord(selectedCoupon.coupon), discountAmount: String(selectedCoupon.amount) }
           : null,
@@ -5532,7 +5677,10 @@ app.post('/api/order/create', async (req, res) => {
     const couponSnapshot = selectedCoupon
       ? { ...formatCouponRecord(selectedCoupon.coupon), discountAmount: String(couponAmount) }
       : null;
-    const boundSales = await getBoundSalesForUser(openid);
+    const [boundSales, inviteScene] = await Promise.all([
+      getBoundSalesForUser(openid),
+      getBoundInviteSceneForUser(openid),
+    ]);
 
     const orderNo = 'ORD' + Date.now() + Math.random().toString(36).slice(2, 6);
 
@@ -5541,6 +5689,7 @@ app.post('/api/order/create', async (req, res) => {
       openid,
       salesOpenid: boundSales?.salesOpenid || null,
       salesNameSnapshot: boundSales?.salesName || '',
+      inviteScene: inviteScene || null,
       orderStatus: 5,
       orderStatusName: '待付款',
       totalAmount: String(calcTotal),
@@ -5654,14 +5803,16 @@ app.post('/api/order/pay', async (req, res) => {
     if (!isOwnedByRequester(order.openid, openid)) {
       return res.send({ code: -1, message: '订单不存在或已超时删除' });
     }
-    if ((!order.salesOpenid || !order.salesNameSnapshot) && openid && openid !== 'local_dev_user') {
-      const boundSales = await getBoundSalesForUser(openid);
-      if (boundSales?.salesOpenid) {
-        await order.update({
-          salesOpenid: boundSales.salesOpenid,
-          salesNameSnapshot: boundSales.salesName,
-        });
-      }
+    if (openid && openid !== 'local_dev_user' && (!order.salesOpenid || !order.salesNameSnapshot || !order.inviteScene)) {
+      const [boundSales, inviteScene] = await Promise.all([
+        getBoundSalesForUser(openid),
+        getBoundInviteSceneForUser(openid),
+      ]);
+      await order.update({
+        salesOpenid: order.salesOpenid || boundSales?.salesOpenid || null,
+        salesNameSnapshot: order.salesNameSnapshot || boundSales?.salesName || '',
+        inviteScene: order.inviteScene || inviteScene || null,
+      });
     }
 
     // 兼容此前仅付款订单因客户端漏传 isOnlyPayment 而已计入的员工券快递费。

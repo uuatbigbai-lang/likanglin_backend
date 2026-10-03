@@ -374,6 +374,11 @@ const Order = sequelize.define("Order", {
     defaultValue: "",
     comment: "下单时销售名称快照",
   },
+  inviteScene: {
+    type: DataTypes.STRING(32),
+    allowNull: true,
+    comment: "下单时归属的推广二维码 scene",
+  },
   orderStatus: {
     type: DataTypes.INTEGER,
     defaultValue: 5,
@@ -755,6 +760,43 @@ const UserSalesBindingRecord = sequelize.define("UserSalesBindingRecord", {
   },
 });
 
+// 管理端创建的推广二维码。scene 是小程序码携带的唯一归因标识，不关联渠道用户。
+const InviteScene = sequelize.define("InviteScene", {
+  scene: {
+    type: DataTypes.STRING(32),
+    allowNull: false,
+    unique: true,
+    comment: "小程序码唯一 scene 值",
+  },
+  remark: {
+    type: DataTypes.STRING(200),
+    allowNull: false,
+    defaultValue: "",
+    comment: "管理端备注",
+  },
+});
+
+// 每位用户当前绑定的推广二维码 scene；与销售绑定独立保存，互不覆盖。
+const UserInviteSceneBinding = sequelize.define("UserInviteSceneBinding", {
+  userOpenid: {
+    type: DataTypes.STRING(128),
+    allowNull: false,
+    unique: true,
+    comment: "用户 openid",
+  },
+  scene: {
+    type: DataTypes.STRING(32),
+    allowNull: false,
+    comment: "当前归属推广二维码 scene",
+  },
+  boundAt: {
+    type: DataTypes.DATE,
+    allowNull: false,
+    defaultValue: DataTypes.NOW,
+    comment: "最近绑定时间",
+  },
+});
+
 const CouponTemplate = sequelize.define("CouponTemplate", {
   templateType: {
     type: DataTypes.STRING(64),
@@ -1088,6 +1130,8 @@ const syncModels = [
   SalesProfile,
   UserSalesBinding,
   UserSalesBindingRecord,
+  InviteScene,
+  UserInviteSceneBinding,
   CouponTemplate,
   CouponProductRelation,
   CouponRecord,
@@ -1255,6 +1299,11 @@ async function ensureOnlineSchema() {
     defaultValue: "",
     comment: "下单时销售名称快照",
   });
+  await ensureColumn("Orders", "inviteScene", {
+    type: DataTypes.STRING(32),
+    allowNull: true,
+    comment: "下单时归属的推广二维码 scene",
+  });
   await ensureColumn("Orders", "isOnlyPayment", {
     type: DataTypes.BOOLEAN,
     allowNull: false,
@@ -1352,6 +1401,8 @@ module.exports = {
   SalesProfile,
   UserSalesBinding,
   UserSalesBindingRecord,
+  InviteScene,
+  UserInviteSceneBinding,
   CouponTemplate,
   CouponProductRelation,
   CouponRecord,

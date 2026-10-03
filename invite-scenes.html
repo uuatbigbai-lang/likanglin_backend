@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>推广二维码</title>
+  <link rel="icon" href="data:,">
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 24px; background: #eef2f6; color: #172033; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    .page { max-width: 1280px; margin: 0 auto; display: grid; gap: 18px; }
+    .card { padding: 20px; border-radius: 16px; background: #fff; box-shadow: 0 12px 28px rgba(16, 24, 40, .08); }
+    h1 { margin: 0; font-size: 28px; } .muted, .small { color: #667085; font-size: 14px; line-height: 22px; } .small { font-size: 12px; line-height: 18px; }
+    .toolbar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; } input, button { font: inherit; } input { height: 40px; min-width: 280px; padding: 0 12px; border: 1px solid #d0d5dd; border-radius: 10px; }
+    button { height: 40px; padding: 0 16px; border: 0; border-radius: 10px; background: #1b3558; color: #fff; font-weight: 700; cursor: pointer; } button.subtle { background: #e7eef8; color: #17314d; } button:disabled { opacity: .55; cursor: not-allowed; }
+    .notice { min-height: 22px; color: #175cd3; font-size: 14px; } .notice.error { color: #b42318; }
+    .table-wrap { overflow-x: auto; } table { width: 100%; min-width: 1000px; border-collapse: collapse; } th, td { padding: 13px 10px; border-bottom: 1px solid #e4e7ec; text-align: left; vertical-align: middle; font-size: 14px; } th { color: #475467; font-size: 12px; background: #f8fafc; } code { padding: 3px 6px; border-radius: 5px; background: #f2f4f7; font-size: 12px; } .actions { display: flex; flex-wrap: wrap; gap: 8px; } .actions button { height: 32px; padding: 0 10px; font-size: 12px; } .empty { padding: 36px; text-align: center; color: #667085; }
+    .modal { position: fixed; inset: 0; display: none; place-items: center; padding: 20px; background: rgba(16, 24, 40, .55); } .modal.show { display: grid; } .modal-card { width: min(440px, 100%); padding: 22px; border-radius: 16px; background: #fff; text-align: center; } .modal-card img { display: block; width: min(360px, 100%); margin: 16px auto; } .modal-actions { display: flex; justify-content: center; gap: 10px; }
+    @media (max-width: 720px) { body { padding: 16px; } .card { padding: 16px; } input { width: 100%; min-width: 0; } }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <section class="card"><h1>推广二维码</h1><div class="muted">每次生成都会创建一个独立 scene，不关联渠道用户。用户扫码后归属到该 scene，后续有效订单的业绩按 scene 汇总。</div></section>
+    <section class="card">
+      <div class="toolbar"><input id="remark" maxlength="200" placeholder="备注（例如：上海展会 A 区）"><button id="createBtn" type="button">生成二维码</button><button id="refreshBtn" class="subtle" type="button">刷新列表</button></div>
+      <div id="notice" class="notice" aria-live="polite"></div><div id="tableWrap"></div>
+    </section>
+  </main>
+  <div id="qrModal" class="modal" role="dialog" aria-modal="true"><div class="modal-card"><h2>推广二维码</h2><div id="sceneText" class="small"></div><img id="qrImage" alt="推广二维码"><div class="modal-actions"><button id="closeModal" class="subtle" type="button">关闭</button></div></div></div>
+  <script>
+    const AUTH_STORAGE_KEY = 'admin-auth-v1';
+    const state = { token: '', items: [] };
+    const $ = (id) => document.getElementById(id);
+    const escapeHtml = (value) => String(value ?? '').replace(/[&<>'"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[c]));
+    function headers() { return { 'Content-Type': 'application/json', ...(state.token ? { 'x-admin-token': state.token } : {}) }; }
+    function notice(message = '', error = false) { const el = $('notice'); el.textContent = message; el.classList.toggle('error', error); }
+    function readAuth() { try { return JSON.parse(localStorage.getItem(AUTH_STORAGE_KEY) || '{}').token || ''; } catch (_) { return ''; } }
+    async function requestJson(url, options = {}) { const response = await fetch(url, options); const json = await response.json().catch(() => ({})); if (response.status === 401) { window.top.location.replace('/admin'); throw new Error('登录已过期'); } if (!response.ok || json.code !== 0) throw new Error(json.message || `请求失败：${response.status}`); return json; }
+    function money(cents) { return `¥${(Number(cents || 0) / 100).toFixed(2)}`; }
+    function formatTime(value) { return value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '-'; }
+    function render() {
+      const wrap = $('tableWrap');
+      if (!state.items.length) { wrap.innerHTML = '<div class="empty">尚未生成推广二维码</div>'; return; }
+      wrap.innerHTML = `<div class="table-wrap"><table><thead><tr><th>备注</th><th>scene</th><th>扫码注册</th><th>有效订单</th><th>业绩金额</th><th>生成时间</th><th>操作</th></tr></thead><tbody>${state.items.map((item) => `<tr><td>${escapeHtml(item.remark || '-')}</td><td><code>${escapeHtml(item.scene)}</code></td><td>${Number(item.registeredUserCount || 0)}</td><td>${Number(item.orderCount || 0)}</td><td>${money(item.performanceAmount)}</td><td class="small">${formatTime(item.createdAt)}</td><td><div class="actions"><button type="button" data-action="qr" data-scene="${escapeHtml(item.scene)}">查看二维码</button><button class="subtle" type="button" data-action="scene" data-scene="${escapeHtml(item.scene)}">查看 scene</button><button class="subtle" type="button" data-action="remark" data-scene="${escapeHtml(item.scene)}" data-remark="${escapeHtml(item.remark || '')}">修改备注</button></div></td></tr>`).join('')}</tbody></table></div>`;
+    }
+    async function load() { notice('加载中…'); const json = await requestJson('/api/admin/invite-scenes', { headers: headers() }); state.items = json.data || []; render(); notice(`已加载 ${state.items.length} 个推广二维码`); }
+    function showQr(scene, qrCode) { $('sceneText').textContent = `scene：${scene}`; $('qrImage').src = qrCode; $('qrModal').classList.add('show'); }
+    async function create() { const btn = $('createBtn'); btn.disabled = true; try { notice('正在生成小程序码…'); const json = await requestJson('/api/admin/invite-scenes', { method: 'POST', headers: headers(), body: JSON.stringify({ remark: $('remark').value }) }); $('remark').value = ''; await load(); showQr(json.data.scene, json.data.qrCode); notice('二维码已生成'); } catch (err) { notice(err.message, true); } finally { btn.disabled = false; } }
+    async function editRemark(scene, current) { const remark = window.prompt('备注（留空可清除）', current); if (remark === null) return; try { await requestJson(`/api/admin/invite-scenes/${encodeURIComponent(scene)}`, { method: 'PATCH', headers: headers(), body: JSON.stringify({ remark }) }); await load(); notice('备注已更新'); } catch (err) { notice(err.message, true); } }
+    $('createBtn').addEventListener('click', create); $('refreshBtn').addEventListener('click', () => load().catch((err) => notice(err.message, true))); $('closeModal').addEventListener('click', () => $('qrModal').classList.remove('show')); $('qrModal').addEventListener('click', (event) => { if (event.target === $('qrModal')) $('qrModal').classList.remove('show'); });
+    $('tableWrap').addEventListener('click', async (event) => { const button = event.target.closest('button[data-action]'); if (!button) return; const { action, scene, remark } = button.dataset; if (action === 'scene') return window.prompt('scene 值', scene); if (action === 'remark') return editRemark(scene, remark || ''); if (action === 'qr') { try { notice('正在加载二维码…'); const json = await requestJson(`/api/admin/invite-scenes/${encodeURIComponent(scene)}/qrcode`, { headers: headers() }); showQr(scene, json.data.qrCode); notice(''); } catch (err) { notice(err.message, true); } } });
+    state.token = readAuth(); if (!state.token) window.top.location.replace('/admin'); else load().catch((err) => notice(err.message, true));
+  </script>
+</body>
+</html>
