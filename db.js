@@ -1130,11 +1130,55 @@ const ContentPage = sequelize.define("ContentPage", {
     defaultValue: "",
     comment: "页面标题",
   },
+  openid: {
+    type: DataTypes.STRING(64),
+    allowNull: false,
+    defaultValue: "",
+    comment: "报告所属用户 openid，用于订阅消息推送",
+  },
+  orderNo: {
+    type: DataTypes.STRING(64),
+    allowNull: false,
+    defaultValue: "",
+    comment: "关联订单号",
+  },
+  pushData: {
+    type: DataTypes.JSON,
+    allowNull: true,
+    defaultValue: null,
+    comment: "订阅消息推送数据：{ reportName, checkNo, subjectName, tip, generateTime }",
+  },
   status: {
     type: DataTypes.INTEGER,
     allowNull: false,
     defaultValue: 1,
     comment: "状态：1启用 0禁用",
+  },
+});
+
+const SubscribeRecord = sequelize.define("SubscribeRecord", {
+  openid: {
+    type: DataTypes.STRING(64),
+    allowNull: false,
+    comment: "订阅用户 openid",
+  },
+  templateId: {
+    type: DataTypes.STRING(128),
+    allowNull: false,
+    defaultValue: "",
+    comment: "订阅消息模板 ID",
+  },
+  orderNo: {
+    type: DataTypes.STRING(64),
+    allowNull: false,
+    defaultValue: "",
+    comment: "触发订阅时的订单号",
+  },
+  status: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    defaultValue: 1,
+    comment: "1=已订阅 0=已取消",
   },
 });
 
@@ -1201,6 +1245,7 @@ const syncModels = [
   AdminAccount,
   ContentPage,
   ContentBlock,
+  SubscribeRecord,
 ];
 
 async function ensureColumn(tableName, columnName, definition) {
@@ -1392,6 +1437,24 @@ async function ensureOnlineSchema() {
     allowNull: true,
     comment: "本券转发时间",
   });
+  await ensureColumn("ContentPages", "openid", {
+    type: DataTypes.STRING(64),
+    allowNull: false,
+    defaultValue: "",
+    comment: "报告所属用户 openid，用于订阅消息推送",
+  });
+  await ensureColumn("ContentPages", "orderNo", {
+    type: DataTypes.STRING(64),
+    allowNull: false,
+    defaultValue: "",
+    comment: "关联订单号",
+  });
+  await ensureColumn("ContentPages", "pushData", {
+    type: DataTypes.JSON,
+    allowNull: true,
+    defaultValue: null,
+    comment: "订阅消息推送数据：{ reportName, checkNo, subjectName, tip, generateTime }",
+  });
 }
 
 // 将曾经分别存放在客户绑定、销售档案和客户管理中的备注收敛到用户本身。
@@ -1519,4 +1582,5 @@ module.exports = {
   AdminAccount,
   ContentPage,
   ContentBlock,
+  SubscribeRecord,
 };

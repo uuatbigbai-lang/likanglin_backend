@@ -31,6 +31,7 @@ const {
   AdminAccount,
   ContentPage,
   ContentBlock,
+  SubscribeRecord,
 } = require('./db');
 const { withCloudHomeAssetPicture, withCloudHomeBannerPicture, withCloudProductPictures, withCloudContentBlock } = require('./productPictures');
 const {
@@ -96,6 +97,9 @@ const formatContentPage = (page) => {
   return {
     pageKey: data.pageKey,
     title: data.title || '',
+    openid: data.openid || '',
+    orderNo: data.orderNo || '',
+    pushData: data.pushData || null,
     status: data.status,
     updatedAt: data.updatedAt,
   };
@@ -1627,6 +1631,41 @@ const getWechatAccessToken = async () => {
     expiresAt: Date.now() + Math.max(Number(tokenRes.expires_in || 7200) - 300, 60) * 1000,
   };
   return wechatAccessTokenCache.token;
+};
+
+// 「检测报告通知」订阅消息模板（模板编号 8557，类目：健康管理）
+const REPORT_NOTIFY_TEMPLATE_ID = '_KqpR6UdzTcNGVsLoR8O7g-U0L2v9zzraVEPfjUWMxw';
+
+// 微信订阅消息 time 类型格式：YYYY年MM月DD日 HH:mm
+const formatReportNotifyTime = (value) => {
+  const date = value ? new Date(value) : new Date();
+  if (Number.isNaN(date.getTime())) return '';
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日 ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+};
+
+// 发送「检测报告通知」订阅消息。返回微信接口原始结果 { errcode, errmsg }。
+const sendReportNotify = async ({ openid, pageKey = '', pushData = {} }) => {
+  if (!openid) return { errcode: -1, errmsg: '缺少 openid' };
+  const accessToken = await getWechatAccessToken();
+  if (!accessToken) return { errcode: -1, errmsg: '缺少微信小程序 AppID/AppSecret 配置' };
+  const data = {
+    thing16: { value: String(pushData.reportName || '').slice(0, 20) },
+    character_string8: { value: String(pushData.checkNo || '').slice(0, 32) },
+    time12: { value: pushData.generateTime || formatReportNotifyTime() },
+    thing9: { value: String(pushData.subjectName || '').slice(0, 20) },
+    thing11: { value: String(pushData.tip || '').slice(0, 20) },
+  };
+  return requestWechatJson({
+    method: 'POST',
+    path: `/cgi-bin/message/subscribe/send?access_token=${encodeURIComponent(accessToken)}`,
+    data: {
+      touser: openid,
+      template_id: REPORT_NOTIFY_TEMPLATE_ID,
+      page: pageKey ? `packages/content/detail/index?pageKey=${encodeURIComponent(pageKey)}` : '',
+      data,
+    },
+  });
 };
 
 const requestWechatBinary = ({ path: requestPath, data }) => new Promise((resolve, reject) => {
@@ -4014,7 +4053,7 @@ app.post('/api/content/page/:pageKey', adminAuth, async (req, res) => {
       return res.send({ code: -1, message: '无效的 pageKey' });
     }
 
-    const { title, blocks } = req.body || {};
+    const { title, blocks, openid = '', orderNo = '', push } = req.body || {};
     if (!Array.isArray(blocks) || blocks.length === 0) {
       return res.send({ code: -1, message: 'blocks 不能为空' });
     }
@@ -4035,17 +4074,114 @@ app.post('/api/content/page/:pageKey', adminAuth, async (req, res) => {
       };
     });
 
-    await ContentPage.upsert({ pageKey, title: String(title || '').trim(), status: 1 });
+    const pageTitle = String(title || '').trim();
+    const targetOpenid = String(openid || '').trim();
+    const targetOrderNo = String(orderNo || '').trim();
+    const pushData = push && typeof push === 'object'
+      ? {
+          reportName: String(push.reportName || pageTitle || '').trim(),
+          checkNo: String(push.checkNo || '').trim(),
+          subjectName: String(push.subjectName || '').trim(),
+          tip: String(push.tip || '').trim(),
+          generateTime: String(push.generateTime || '').trim(),
+        }
+      : null;
+
+    await ContentPage.upsert({
+      pageKey,
+      title: pageTitle,
+      openid: targetOpenid,
+      orderNo: targetOrderNo,
+      pushData,
+      status: 1,
+    });
     await ContentBlock.destroy({ where: { pageKey } });
     const created = await ContentBlock.bulkCreate(normalized.map((block) => ({ ...block, pageKey })));
+
+    // 上传报告内容后，向绑定用户触发「检测报告通知」订阅消息
+    let pushResult = null;
+    if (targetOpenid && pushData) {
+      try {
+        pushResult = await sendReportNotify({ openid: targetOpenid, pageKey, pushData });
+        console.log(`📣 检测报告订阅消息已发送: ${pageKey} → ${targetOpenid}`, pushResult);
+      } catch (err) {
+        pushResult = { errcode: -1, errmsg: err.message };
+        console.error(`检测报告订阅消息发送失败: ${pageKey} → ${targetOpenid}`, err.message);
+      }
+    }
 
     res.send({
       code: 0,
       data: {
-        page: { pageKey, title: String(title || '').trim(), status: 1 },
+        page: { pageKey, title: pageTitle, openid: targetOpenid, orderNo: targetOrderNo, pushData, status: 1 },
         blocks: created.map(formatContentBlock),
+        push: pushResult,
       },
     });
+  } catch (err) {
+    res.send({ code: -1, message: err.message });
+  }
+});
+
+// 记录用户订阅一次性订阅消息（支付成功页触发 wx.requestSubscribeMessage 后调用）
+app.post('/api/subscribe/record', async (req, res) => {
+  try {
+    const openid = getRequestOpenid(req);
+    const { templateId = '', orderNo = '' } = req.body || {};
+    if (!templateId) {
+      return res.send({ code: -1, message: '缺少 templateId' });
+    }
+    await SubscribeRecord.create({
+      openid,
+      templateId: String(templateId).trim(),
+      orderNo: String(orderNo || '').trim(),
+      status: 1,
+    });
+    res.send({ code: 0, data: { openid, templateId, orderNo: String(orderNo || '').trim() } });
+  } catch (err) {
+    res.send({ code: -1, message: err.message });
+  }
+});
+
+// 订阅消息常见错误码友好提示
+const SUBSCRIBE_SEND_ERRORS = {
+  40003: 'openid 无效',
+  40037: '模板 ID 无效',
+  43101: '用户拒绝接收或订阅额度已用完',
+  47003: '模板参数不完整或不正确',
+};
+
+// 手动触发「检测报告通知」订阅消息（管理员，独立于内容上传）
+app.post('/api/subscribe/send', adminAuth, async (req, res) => {
+  try {
+    const { openid = '', pageKey = '', push = {} } = req.body || {};
+    const targetOpenid = String(openid || '').trim();
+    if (!targetOpenid) {
+      return res.send({ code: -1, message: '缺少 openid' });
+    }
+    const pushData = {
+      reportName: String(push.reportName || '').trim(),
+      checkNo: String(push.checkNo || '').trim(),
+      subjectName: String(push.subjectName || '').trim(),
+      tip: String(push.tip || '').trim(),
+      generateTime: String(push.generateTime || '').trim(),
+    };
+
+    let result;
+    try {
+      result = await sendReportNotify({ openid: targetOpenid, pageKey: String(pageKey || '').trim(), pushData });
+    } catch (err) {
+      return res.send({ code: -1, message: `推送请求失败：${err.message}` });
+    }
+
+    const errcode = Number(result.errcode || 0);
+    const ok = errcode === 0;
+    const message = ok
+      ? '推送成功'
+      : `推送失败：${SUBSCRIBE_SEND_ERRORS[errcode] || result.errmsg || `errcode ${errcode}`}`;
+
+    console.log(`${ok ? '📣' : '⚠️'} 手动触发检测报告订阅消息: ${targetOpenid}`, result);
+    res.send({ code: ok ? 0 : -1, message, data: result });
   } catch (err) {
     res.send({ code: -1, message: err.message });
   }
