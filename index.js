@@ -29,8 +29,10 @@ const {
   HomeAsset,
   HomeBanner,
   AdminAccount,
+  ContentPage,
+  ContentBlock,
 } = require('./db');
-const { withCloudHomeAssetPicture, withCloudHomeBannerPicture, withCloudProductPictures } = require('./productPictures');
+const { withCloudHomeAssetPicture, withCloudHomeBannerPicture, withCloudProductPictures, withCloudContentBlock } = require('./productPictures');
 const {
   wxPayConfig,
   isWxPayConfigured,
@@ -86,6 +88,30 @@ const formatHomeBanner = (banner) => {
     sort: data.sort || 0,
     status: data.status,
     updatedAt: data.updatedAt,
+  };
+};
+
+const formatContentPage = (page) => {
+  const data = page && typeof page.toJSON === 'function' ? page.toJSON() : { ...page };
+  return {
+    pageKey: data.pageKey,
+    title: data.title || '',
+    status: data.status,
+    updatedAt: data.updatedAt,
+  };
+};
+
+const formatContentBlock = (block) => {
+  const data = withCloudContentBlock(block);
+  return {
+    id: data.id,
+    pageKey: data.pageKey,
+    blockType: data.blockType,
+    title: data.title || '',
+    content: data.content || '',
+    mediaUrl: data.mediaUrl || '',
+    sort: data.sort || 0,
+    status: data.status,
   };
 };
 
@@ -2376,6 +2402,10 @@ app.get('/admin/customers', (req, res) => {
 app.get('/admin/invite-scenes', (req, res) => {
   res.sendFile(path.join(__dirname, 'invite-scenes.html'));
 });
+
+app.get('/admin/demo', (req, res) => {
+  res.sendFile(path.join(__dirname, 'demo.html'));
+});
 registerAdminAuthRoutes({ app, AdminAccount, adminAuth });
 
 // 小程序调用，获取微信 Open ID
@@ -3942,6 +3972,150 @@ app.post('/api/home/banners/seed', async (req, res) => {
 
     await HomeBanner.bulkCreate(seedData);
     res.send({ code: 0, message: '首页 Banner 种子数据初始化成功', data: { count: seedData.length } });
+  } catch (err) {
+    res.send({ code: -1, message: err.message });
+  }
+});
+
+// 获取富媒体内容页配置（文本/图片/视频/PDF 内容块列表）
+app.get('/api/content/page/:pageKey', async (req, res) => {
+  try {
+    const pageKey = String(req.params.pageKey || '').trim();
+    if (!pageKey) {
+      return res.send({ code: -1, message: '缺少 pageKey' });
+    }
+
+    const page = await ContentPage.findOne({ where: { pageKey, status: 1 } });
+    const blocks = await ContentBlock.findAll({
+      where: { pageKey, status: 1 },
+      order: [
+        ['sort', 'ASC'],
+        ['id', 'ASC'],
+      ],
+    });
+
+    res.send({
+      code: 0,
+      data: {
+        page: page ? formatContentPage(page) : { pageKey, title: '', status: 1 },
+        blocks: blocks.map(formatContentBlock),
+      },
+    });
+  } catch (err) {
+    res.send({ code: -1, message: err.message });
+  }
+});
+
+// 配置/保存富媒体内容页：整页替换内容块列表（管理员）
+app.post('/api/content/page/:pageKey', adminAuth, async (req, res) => {
+  try {
+    const pageKey = String(req.params.pageKey || '').trim();
+    if (!/^[a-zA-Z][a-zA-Z0-9_-]{1,63}$/.test(pageKey)) {
+      return res.send({ code: -1, message: '无效的 pageKey' });
+    }
+
+    const { title, blocks } = req.body || {};
+    if (!Array.isArray(blocks) || blocks.length === 0) {
+      return res.send({ code: -1, message: 'blocks 不能为空' });
+    }
+
+    const ALLOWED_BLOCK_TYPES = new Set(['text', 'image', 'video', 'pdf']);
+    const normalized = blocks.map((item, index) => {
+      const blockType = String(item?.blockType || '').trim().toLowerCase();
+      if (!ALLOWED_BLOCK_TYPES.has(blockType)) {
+        throw new Error(`第 ${index + 1} 个内容块类型无效：${item?.blockType}`);
+      }
+      return {
+        blockType,
+        title: String(item?.title || '').trim(),
+        content: String(item?.content || '').trim(),
+        mediaUrl: String(item?.mediaUrl || item?.url || '').trim(),
+        sort: Number.isFinite(Number(item?.sort)) ? Number(item?.sort) : index,
+        status: 1,
+      };
+    });
+
+    await ContentPage.upsert({ pageKey, title: String(title || '').trim(), status: 1 });
+    await ContentBlock.destroy({ where: { pageKey } });
+    const created = await ContentBlock.bulkCreate(normalized.map((block) => ({ ...block, pageKey })));
+
+    res.send({
+      code: 0,
+      data: {
+        page: { pageKey, title: String(title || '').trim(), status: 1 },
+        blocks: created.map(formatContentBlock),
+      },
+    });
+  } catch (err) {
+    res.send({ code: -1, message: err.message });
+  }
+});
+
+// 初始化富媒体内容页种子数据（演示 text/image/video/pdf 四种块类型）
+app.post('/api/content/page/:pageKey/seed', async (req, res) => {
+  try {
+    const pageKey = String(req.params.pageKey || 'demo').trim();
+    if (!/^[a-zA-Z][a-zA-Z0-9_-]{1,63}$/.test(pageKey)) {
+      return res.send({ code: -1, message: '无效的 pageKey' });
+    }
+
+    await ContentPage.destroy({ where: { pageKey } });
+    await ContentBlock.destroy({ where: { pageKey } });
+
+    await ContentPage.create({
+      pageKey,
+      title: '肠道微生态科普手册',
+      status: 1,
+    });
+
+    const seedBlocks = [
+      {
+        pageKey,
+        blockType: 'text',
+        title: '导语',
+        content: '肠道是人体最大的免疫器官，栖息着数以万亿计的微生物。\n菌群平衡与消化、免疫、代谢乃至情绪都密切相关。',
+        mediaUrl: '',
+        sort: 10,
+        status: 1,
+      },
+      {
+        pageKey,
+        blockType: 'image',
+        title: '肠道菌群示意图',
+        content: '肠道菌群多样性是评估健康的重要指标。',
+        mediaUrl: 'demo/gut-microbiome.png',
+        sort: 20,
+        status: 1,
+      },
+      {
+        pageKey,
+        blockType: 'video',
+        title: '科普视频',
+        content: '三分钟看懂肠道菌群与健康的关系。',
+        mediaUrl: 'demo/gut-microbiome.mp4',
+        sort: 30,
+        status: 1,
+      },
+      {
+        pageKey,
+        blockType: 'pdf',
+        title: '肠道健康白皮书',
+        content: '点击下载完整 PDF 报告。',
+        mediaUrl: 'demo/gut-health-report.pdf',
+        sort: 40,
+        status: 1,
+      },
+    ];
+
+    const created = await ContentBlock.bulkCreate(seedBlocks);
+    res.send({
+      code: 0,
+      message: '内容页种子数据初始化成功',
+      data: {
+        page: { pageKey, title: '肠道微生态科普手册', status: 1 },
+        blocks: created.map(formatContentBlock),
+      },
+    });
   } catch (err) {
     res.send({ code: -1, message: err.message });
   }

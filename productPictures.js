@@ -9,6 +9,7 @@ if(!CLOUD_STORAGE_BASE) {
 const GOODS_PICTURE_CLOUD_BASE = `${CLOUD_STORAGE_BASE}/goodsPicture`;
 const HOME_BANNER_CLOUD_BASE = `${CLOUD_STORAGE_BASE}/homeBanner`;
 const HOME_ASSET_CLOUD_BASE = `${CLOUD_STORAGE_BASE}/homeAsset`;
+const CONTENT_MEDIA_CLOUD_BASE = `${CLOUD_STORAGE_BASE}/contentMedia`;
 const DEFAULT_DETAIL_BANNER_HEIGHT = 425;
 const PRODUCT_DISPLAY_CONFIG = {
   // 这款商品的 banner 原图偏高，提升详情页轮播高度以减少左右留白。
@@ -31,6 +32,12 @@ const getHomeBannerPicture = (fileName) => {
   if (!fileName) return '';
   if (isAbsolutePicture(fileName)) return fileName;
   return `${HOME_BANNER_CLOUD_BASE}/${trimLeadingSlash(fileName)}`;
+};
+
+const getContentMediaUrl = (value = '') => {
+  if (!value) return '';
+  if (isAbsolutePicture(value)) return value;
+  return `${CONTENT_MEDIA_CLOUD_BASE}/${trimLeadingSlash(value)}`;
 };
 
 const getProductBanners = (spuId, count) =>
@@ -120,8 +127,17 @@ const withCloudHomeBannerPicture = (banner) => {
   };
 };
 
+const withCloudContentBlock = (block) => {
+  const data = block && typeof block.toJSON === 'function' ? block.toJSON() : { ...block };
+  return {
+    ...data,
+    mediaUrl: getContentMediaUrl(data.mediaUrl),
+  };
+};
+
 module.exports = {
   withCloudProductPictures,
   withCloudHomeAssetPicture,
   withCloudHomeBannerPicture,
+  withCloudContentBlock,
 };

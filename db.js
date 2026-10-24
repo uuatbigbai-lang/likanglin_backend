@@ -1117,6 +1117,66 @@ const AdminAccount = sequelize.define("AdminAccount", {
   },
 });
 
+// 富媒体内容页：由服务端配置的图文/视频/PDF 内容
+const ContentPage = sequelize.define("ContentPage", {
+  pageKey: {
+    type: DataTypes.STRING(64),
+    allowNull: false,
+    unique: true,
+    comment: "页面唯一标识，如 science-article-01",
+  },
+  title: {
+    type: DataTypes.STRING(200),
+    defaultValue: "",
+    comment: "页面标题",
+  },
+  status: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    defaultValue: 1,
+    comment: "状态：1启用 0禁用",
+  },
+});
+
+const ContentBlock = sequelize.define("ContentBlock", {
+  pageKey: {
+    type: DataTypes.STRING(64),
+    allowNull: false,
+    comment: "所属页面标识，对应 ContentPage.pageKey",
+  },
+  blockType: {
+    type: DataTypes.STRING(32),
+    allowNull: false,
+    comment: "内容块类型：text/image/video/pdf",
+  },
+  title: {
+    type: DataTypes.STRING(200),
+    defaultValue: "",
+    comment: "内容块标题（也用作图片/视频/PDF 的说明标题）",
+  },
+  content: {
+    type: DataTypes.TEXT,
+    defaultValue: "",
+    comment: "文本内容（text 块正文，或 image/video/pdf 块的说明文字）",
+  },
+  mediaUrl: {
+    type: DataTypes.STRING(1000),
+    defaultValue: "",
+    comment: "媒体地址：图片/视频/PDF 的文件名、cloud:// 或完整 https 地址",
+  },
+  sort: {
+    type: DataTypes.INTEGER,
+    defaultValue: 0,
+    comment: "排序权重，越小越靠前",
+  },
+  status: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    defaultValue: 1,
+    comment: "状态：1启用 0禁用",
+  },
+});
+
 const syncModels = [
   Counter,
   User,
@@ -1139,6 +1199,8 @@ const syncModels = [
   HomeAsset,
   HomeBanner,
   AdminAccount,
+  ContentPage,
+  ContentBlock,
 ];
 
 async function ensureColumn(tableName, columnName, definition) {
@@ -1455,4 +1517,6 @@ module.exports = {
   HomeAsset,
   HomeBanner,
   AdminAccount,
+  ContentPage,
+  ContentBlock,
 };

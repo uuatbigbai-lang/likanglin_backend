@@ -8,11 +8,13 @@
     "dev:landianhui": "nodemon --exec \"node --env-file=./.env_landianhui\" index.js",
     "dev:likanglin": "nodemon --exec \"node --env-file=./.env_likanglin\" index.js",
     "upload:home-assets": "node home-assets/upload-home-assets.js",
-    "upload:home-assets:local": "node home-assets/upload-home-assets.js --base http://127.0.0.1:3000"
+    "upload:home-assets:local": "node home-assets/upload-home-assets.js --base http://127.0.0.1:3000",
+    "upload:storage": "node scripts/upload-cloud-storage.js"
   },
   "author": "",
   "license": "Apache-2.0",
   "dependencies": {
+    "@cloudbase/node-sdk": "^2.11.0",
     "cors": "^2.8.5",
     "express": "^4.16.4",
     "morgan": "^1.10.0",

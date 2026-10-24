@@ -1,5 +1,6 @@
 node_modules/*
 .env
+.env.cloud
 certs/*
 .DS_Store
 .env_likanglin
