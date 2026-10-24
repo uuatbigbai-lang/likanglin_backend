@@ -7,6 +7,7 @@ const morgan = require('morgan');
 const { Op } = require('sequelize');
 const {
   init: initDB,
+  FMT_INTENT_PRODUCT,
   Counter,
   User,
   UserAvatar,
@@ -156,7 +157,7 @@ const DEFAULT_COUPON_TEMPLATES = [
     value: 0,
     thresholdAmount: 0,
     minQuantity: 0,
-    desc: '第三代16S与阴道菌群检测体验价380元/次，二代肠道菌群检测体验价280元/次，均包邮。',
+    desc: '肠道与阴道菌群检测均采用16S rRNA测序技术。适用产品：第三代16S肠道检测（沃本）380元、第二代16S阴道检测（科茵）380元、第二代16S肠道检测（科茵）280元，均包邮。',
     sort: 60,
     meta: {
       experienceShared: true,
@@ -459,7 +460,7 @@ const formatCouponRecord = (coupon) => {
       : template.ruleType === 'employee_price'
         ? '仅对已配置员工价的商品生效，下单时按员工价自动抵扣差额；收货下单时加收15元快递费。'
         : isExperiencePrice
-          ? `仅限16S、二代肠道及阴道菌群检测服务；${experienceShared ? '符合条件的每件商品均享体验价。' : '购物车内仅价格最高的一件商品享体验价。'}`
+          ? `本券适用于16S rRNA检测服务：第三代16S肠道检测（沃本）、第二代16S阴道检测（科茵）、第二代16S肠道检测（科茵）；${experienceShared ? '符合条件的每件商品均享体验价。' : '购物车内仅价格最高的一件商品享体验价。'}`
         : getScopedSpuIds(template).length
           ? '仅对指定商品生效，下单时自动按命中的商品金额抵扣。'
           : '下单时自动选择可用优惠券并抵扣。',
@@ -759,7 +760,7 @@ const getCouponUnavailableReason = (coupon, goodsList = []) => {
   }
   if (template.ruleType === 'experience_price') {
     if (!calculateExperiencePriceDiscount(template, eligibleGoodsList)) {
-      return `${template.title}仅限16S、二代肠道或阴道菌群检测服务使用`;
+      return `${template.title}仅限第三代16S肠道检测（沃本）、第二代16S阴道检测（科茵）或第二代16S肠道检测（科茵）使用`;
     }
   }
   if (template.ruleType === 'buy_x_get_y') {
@@ -4337,7 +4338,8 @@ app.post('/api/products/seed', async (req, res) => {
       prod6,
       prod7,
       prod8,
-      prod9
+      prod9,
+      FMT_INTENT_PRODUCT,
     ];
 
 

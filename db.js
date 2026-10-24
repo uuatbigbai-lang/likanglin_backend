@@ -1373,6 +1373,49 @@ async function migrateLegacyCouponProductRelations() {
   if (rows.length) await CouponProductRelation.bulkCreate(rows, { ignoreDuplicates: true });
 }
 
+// 新增商品：肠道菌群移植（FMT）意向金。
+// 图片只有封面（banner1.png）与详情（detail1.png）两张，未配置独立缩略图/SKU 图，
+// 因此 useThumb/usePicture 均为 false，缩略图与 SKU 图会回退到封面。
+// couponTemplateTypes 置为空数组，表示不参与折扣券。
+const FMT_INTENT_PRODUCT = {
+  spuId: 'spu_probiotic_10',
+  title: '肠道菌群移植（FMT）意向金',
+  brief: '',
+  price: 2000,
+  badge: '',
+  couponTemplateTypes: [],
+  useThumb: false,
+  bannerLength: 1,
+  detailPicLength: 1,
+  sort: 0,
+  minSalePrice: 200000,
+  maxSalePrice: 200000,
+  soldNum: 0,
+  spuStockQuantity: 99999,
+  isPutOnSale: 1,
+  specList: [],
+  skuList: [
+    {
+      skuId: 'spu_probiotic_10_sku1',
+      pictureSkuId: 'sku1',
+      usePicture: false,
+      specInfo: [],
+      priceInfo: [
+        { priceType: 1, price: '200000' },
+      ],
+      stockInfo: { stockQuantity: 9999, safeStockQuantity: 0, soldQuantity: 0 },
+    },
+  ],
+};
+
+// 非破坏性：仅当商品不存在时创建，避免覆盖后台已配置的员工价/优惠券等。
+async function ensureFmtIntentProduct() {
+  return Product.findOrCreate({
+    where: { spuId: FMT_INTENT_PRODUCT.spuId },
+    defaults: FMT_INTENT_PRODUCT,
+  });
+}
+
 // 数据库初始化方法
 async function init() {
   for (const model of syncModels) {
@@ -1384,11 +1427,13 @@ async function init() {
   }
   await migrateLegacyUserRemarkNames();
   await migrateLegacyCouponProductRelations();
+  await ensureFmtIntentProduct();
 }
 
 // 导出初始化方法和模型
 module.exports = {
   init,
+  FMT_INTENT_PRODUCT,
   Counter,
   User,
   UserAvatar,
