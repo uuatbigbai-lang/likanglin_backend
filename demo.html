@@ -1,0 +1,790 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>蓝点荟 · 中后台系统（原型演示）</title>
+<style>
+  :root{
+    --brand:#059669; --brand-600:#10b981; --brand-700:#047857; --brand-800:#065f46;
+    --brand-soft:#ecfdf5; --brand-line:#a7f3d0;
+    --ink:#0f172a; --ink-2:#475569; --muted:#94a3b8;
+    --line:#e2e8f0; --line-2:#f1f5f9; --bg:#f6f8fb; --card:#ffffff;
+    --series-blue:#2a78d6; --series-orange:#eb6834; --series-aqua:#1baf7a;
+    --good:#0ca30c; --critical:#dc2626; --amber-ink:#92400e;
+    --radius:16px;
+    --shadow:0 1px 2px rgba(15,23,42,.04),0 4px 12px rgba(15,23,42,.05);
+    --shadow-lg:0 12px 32px rgba(6,78,59,.18);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{font:14px/1.6 system-ui,-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    color:var(--ink);background:var(--bg);-webkit-font-smoothing:antialiased}
+  button{font-family:inherit;cursor:pointer} input,select{font-family:inherit}
+
+  /* ===== 登录 ===== */
+  .login-wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;position:relative;overflow:hidden;
+    background:radial-gradient(1200px 600px at 20% -10%,#34d399 0%,transparent 55%),
+               radial-gradient(1000px 700px at 110% 110%,#065f46 0%,transparent 55%),
+               linear-gradient(135deg,#064e3b 0%,#047857 60%,#059669 100%)}
+  .login-wrap::after{content:"";position:absolute;inset:0;background:radial-gradient(rgba(255,255,255,.08) 1px,transparent 1px);background-size:26px 26px;opacity:.35}
+  .login-card{position:relative;z-index:2;background:rgba(255,255,255,.97);border-radius:24px;padding:44px 40px;width:100%;max-width:400px;
+    box-shadow:var(--shadow-lg);backdrop-filter:blur(8px)}
+  .login-logo{width:56px;height:56px;border-radius:16px;background:linear-gradient(135deg,#10b981,#047857);color:#fff;
+    display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:700;margin-bottom:20px;box-shadow:0 8px 20px rgba(5,150,105,.4)}
+  .login-card h1{font-size:22px;font-weight:800;letter-spacing:.5px}
+  .login-card .sub{color:var(--muted);font-size:13px;margin:6px 0 26px}
+  .field{margin-bottom:15px}
+  .field label{display:block;font-size:13px;color:var(--ink-2);margin-bottom:6px;font-weight:500}
+  .field input{width:100%;padding:12px 14px;border:1px solid var(--line);border-radius:12px;font-size:14px;outline:none;transition:.15s}
+  .field input:focus{border-color:var(--brand-600);box-shadow:0 0 0 4px rgba(16,185,129,.12)}
+  .btn-primary{width:100%;padding:13px;border:0;border-radius:12px;background:linear-gradient(135deg,#10b981,#059669);
+    color:#fff;font-size:15px;font-weight:700;letter-spacing:.5px;transition:.18s;box-shadow:0 8px 20px rgba(5,150,105,.35)}
+  .btn-primary:hover{transform:translateY(-1px);box-shadow:0 12px 26px rgba(5,150,105,.45)}
+  .login-hint{margin-top:18px;text-align:center;font-size:12px;color:var(--muted)}
+
+  /* ===== 布局 ===== */
+  .app{display:none;min-height:100vh}
+  .app.on{display:flex}
+  .sidebar{width:236px;flex:0 0 236px;color:#e7f7ef;display:flex;flex-direction:column;position:sticky;top:0;height:100vh;
+    background:linear-gradient(180deg,#043229 0%,#065f46 100%)}
+  .brand{display:flex;align-items:center;gap:11px;padding:22px 18px 16px}
+  .brand .logo{width:40px;height:40px;border-radius:12px;background:linear-gradient(135deg,#34d399,#059669);color:#fff;
+    display:flex;align-items:center;justify-content:center;font-weight:800;font-size:18px;box-shadow:0 4px 12px rgba(0,0,0,.25)}
+  .brand .name{font-weight:700;font-size:15px;color:#fff;letter-spacing:.5px}
+  .brand .sub{font-size:11px;color:#6ee7b7}
+  .nav{padding:6px 12px;flex:1;overflow:auto}
+  .nav-group{font-size:11px;color:#5eead4;opacity:.6;padding:16px 12px 6px;letter-spacing:1px;font-weight:600}
+  .nav-item{display:flex;align-items:center;gap:11px;padding:10px 12px;border-radius:10px;
+    color:#b8e8d4;font-size:14px;margin-bottom:3px;transition:.15s}
+  .nav-item:hover{background:rgba(255,255,255,.07);color:#fff}
+  .nav-item.active{background:rgba(16,185,129,.22);color:#fff;font-weight:600;box-shadow:inset 0 0 0 1px rgba(110,231,183,.25)}
+  .nav-item .ic{width:18px;text-align:center;font-size:15px}
+  .side-foot{margin:12px;padding:12px 14px;border-radius:12px;background:rgba(255,255,255,.06);font-size:12px;color:#a7f3d0;line-height:1.7}
+  .side-foot b{color:#fff;font-weight:600}
+
+  .main{flex:1;min-width:0;display:flex;flex-direction:column}
+  .topbar{height:62px;background:rgba(255,255,255,.9);backdrop-filter:blur(8px);border-bottom:1px solid var(--line);
+    display:flex;align-items:center;justify-content:space-between;padding:0 26px;position:sticky;top:0;z-index:5}
+  .topbar .title{font-size:17px;font-weight:800;letter-spacing:.3px}
+  .topbar .right{display:flex;align-items:center;gap:16px}
+  .search-box{position:relative}
+  .search-box input{width:230px;padding:9px 12px 9px 34px;border:1px solid var(--line);border-radius:10px;font-size:13px;outline:none;transition:.15s}
+  .search-box input:focus{border-color:var(--brand-600)}
+  .search-box::before{content:"🔍";position:absolute;left:11px;top:50%;transform:translateY(-50%);font-size:12px;opacity:.5}
+  .avatar{width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,#10b981,#047857);color:#fff;
+    display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700}
+  .user-txt{font-size:12px;color:var(--muted);text-align:right;line-height:1.3}
+  .user-txt b{display:block;color:var(--ink);font-size:13px}
+
+  .content{padding:24px;max-width:1280px;width:100%;margin:0 auto;animation:fade .3s ease}
+  @keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+
+  /* ===== 组件 ===== */
+  .page-head{display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:18px;flex-wrap:wrap;gap:12px}
+  .page-head h2{font-size:21px;font-weight:800;letter-spacing:.3px}
+  .page-head .desc{color:var(--muted);font-size:13px;margin-top:3px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:22px;box-shadow:var(--shadow)}
+  .grid{display:grid;gap:16px}
+  .stat-grid{grid-template-columns:repeat(4,1fr)}
+  @media(max-width:960px){.stat-grid{grid-template-columns:repeat(2,1fr)}}
+  .stat{padding:20px;position:relative;overflow:hidden;transition:.18s}
+  .stat:hover{transform:translateY(-2px);box-shadow:var(--shadow-lg)}
+  .stat::before{content:"";position:absolute;left:0;top:0;bottom:0;width:4px;background:linear-gradient(#34d399,#059669)}
+  .stat .label{color:var(--muted);font-size:13px}
+  .stat .value{font-size:30px;font-weight:800;margin:4px 0 2px;font-variant-numeric:tabular-nums;letter-spacing:-.5px}
+  .stat .delta{font-size:12px;color:var(--muted)}
+  .delta.up{color:var(--good)} .delta.down{color:var(--critical)}
+  .card h3{font-size:15px;font-weight:700;margin-bottom:4px}
+  .card .sub{color:var(--muted);font-size:12px;margin-bottom:14px}
+  .two-col{grid-template-columns:1.35fr 1fr}
+  @media(max-width:960px){.two-col{grid-template-columns:1fr}}
+
+  .btn{display:inline-flex;align-items:center;gap:6px;padding:9px 15px;border-radius:10px;font-size:13px;
+    border:1px solid var(--line);background:#fff;color:var(--ink-2);transition:.15s;font-weight:500}
+  .btn:hover{border-color:var(--brand-600);color:var(--brand-700)}
+  .btn.solid{background:linear-gradient(135deg,#10b981,#059669);border:0;color:#fff;font-weight:600;box-shadow:0 4px 12px rgba(5,150,105,.28)}
+  .btn.solid:hover{box-shadow:0 6px 16px rgba(5,150,105,.4)}
+  .btn.ghost{background:var(--brand-soft);border-color:var(--brand-line);color:var(--brand-700)}
+
+  table{width:100%;border-collapse:collapse}
+  th,td{padding:12px 13px;text-align:left;border-bottom:1px solid var(--line-2);font-size:13px;vertical-align:middle}
+  th{color:var(--muted);font-weight:600;font-size:12px;background:#fafbfc;white-space:nowrap;letter-spacing:.3px}
+  tr:hover td{background:#fafcfb}
+  tbody tr{cursor:pointer;transition:.12s}
+  .num{font-variant-numeric:tabular-nums}
+
+  .tag{display:inline-block;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:500;white-space:nowrap}
+  .tag.emerald{background:#d1fae5;color:#065f46}
+  .tag.green{background:#dcfce7;color:#15803d}
+  .tag.gray{background:#f1f5f9;color:#64748b}
+  .tag.amber{background:#fef3c7;color:#92400e}
+  .tag.rose{background:#ffe4e6;color:#be123c}
+  .tag.blue{background:#dbeafe;color:#1d4ed8}
+  .tag.violet{background:#ede9fe;color:#6d28d9}
+
+  .tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin-bottom:18px;overflow-x:auto}
+  .tab{padding:11px 15px;font-size:14px;color:var(--muted);border:0;background:none;border-bottom:2px solid transparent;white-space:nowrap;font-weight:500}
+  .tab.active{color:var(--brand-700);font-weight:700;border-bottom-color:var(--brand-600)}
+  .tab-pane{display:none}
+  .tab-pane.active{display:block;animation:fade .25s ease}
+
+  .seg{display:inline-flex;background:#f1f5f9;border-radius:10px;padding:3px;gap:2px}
+  .seg button{border:0;background:none;padding:7px 15px;border-radius:8px;font-size:13px;color:var(--ink-2);font-weight:500}
+  .seg button.active{background:#fff;color:var(--brand-700);font-weight:600;box-shadow:0 1px 3px rgba(15,23,42,.1)}
+
+  .kv{display:grid;grid-template-columns:repeat(2,1fr);gap:14px 26px}
+  @media(max-width:700px){.kv{grid-template-columns:1fr}}
+  .kv .k{color:var(--muted);font-size:12px}
+  .kv .v{font-size:14px;margin-top:2px;font-weight:500}
+  .divider{height:1px;background:var(--line-2);margin:18px 0}
+  .empty{padding:44px;text-align:center;color:var(--muted);font-size:13px}
+
+  .banner{margin:0 24px 20px;background:linear-gradient(120deg,#065f46,#059669);color:#fff;border-radius:14px;
+    padding:15px 20px;display:flex;align-items:center;gap:10px;font-size:13px;box-shadow:var(--shadow)}
+  .banner b{font-size:14px}
+
+  .chart-wrap{width:100%}
+  .chart-tip{font-size:12px;color:var(--muted);margin-top:8px}
+  .tooltip{position:fixed;pointer-events:none;background:#0f172a;color:#fff;border-radius:10px;
+    padding:9px 12px;font-size:12px;line-height:1.55;display:none;z-index:20;box-shadow:0 12px 28px rgba(0,0,0,.3);white-space:nowrap}
+
+  .bar-row{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+  .bar-row .nm{width:66px;font-size:13px;color:var(--ink-2);flex:0 0 66px}
+  .bar-row .track{flex:1;height:10px;background:#f1f5f9;border-radius:999px;overflow:hidden}
+  .bar-row .fill{height:100%;border-radius:999px;transition:width .5s ease}
+  .bar-row .val{width:46px;text-align:right;font-size:13px;font-variant-numeric:tabular-nums;color:var(--ink-2);flex:0 0 46px}
+
+  /* 待办/提醒 */
+  .todo{display:flex;align-items:flex-start;gap:12px;padding:12px 0;border-bottom:1px dashed var(--line)}
+  .todo:last-child{border-bottom:0}
+  .todo .dot{width:9px;height:9px;border-radius:50%;margin-top:6px;flex:0 0 9px}
+  .todo .dot.urgent{background:#dc2626} .todo .dot.normal{background:#f59e0b} .todo .dot.soon{background:#10b981}
+  .todo .t{font-size:13px;font-weight:600}
+  .todo .d{font-size:12px;color:var(--muted)}
+
+  /* AI 聊天 */
+  .chat{display:flex;flex-direction:column;height:460px;border:1px solid var(--line);border-radius:14px;overflow:hidden}
+  .chat .msgs{flex:1;overflow:auto;padding:18px;background:#fafcfb;display:flex;flex-direction:column;gap:12px}
+  .msg{max-width:76%;padding:11px 14px;border-radius:14px;font-size:13px;line-height:1.6}
+  .msg.user{align-self:flex-end;background:linear-gradient(135deg,#10b981,#059669);color:#fff;border-bottom-right-radius:4px}
+  .msg.ai{align-self:flex-start;background:#fff;border:1px solid var(--line);border-bottom-left-radius:4px;box-shadow:var(--shadow)}
+  .msg.ai .who{font-size:11px;color:var(--brand-700);font-weight:700;margin-bottom:3px}
+  .chat .input{display:flex;gap:8px;padding:12px;border-top:1px solid var(--line);background:#fff}
+  .chat .input input{flex:1;padding:10px 14px;border:1px solid var(--line);border-radius:10px;font-size:13px;outline:none}
+  .chat .input input:focus{border-color:var(--brand-600)}
+  .sugg{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+  .sugg button{padding:6px 12px;border:1px solid var(--brand-line);background:var(--brand-soft);color:var(--brand-700);border-radius:999px;font-size:12px}
+</style>
+</head>
+<body>
+
+<div class="login-wrap" id="login">
+  <div class="login-card">
+    <div class="login-logo">荟</div>
+    <h1>蓝点荟 · 中后台系统</h1>
+    <div class="sub">抗衰健康管理 · 客户档案 / 审批 / 财务 / AI 一体化</div>
+    <div class="field"><label>账号</label><input id="login-user" value="liyisheng" placeholder="员工账号"></div>
+    <div class="field"><label>密码</label><input id="login-pass" type="password" value="123456" placeholder="密码"></div>
+    <button class="btn-primary" id="login-btn">进入系统</button>
+    <div class="login-hint">演示账号可任意填写 · 数据均为演示数据</div>
+  </div>
+</div>
+
+<div class="app" id="app">
+  <aside class="sidebar">
+    <div class="brand"><div class="logo">荟</div><div><div class="name">蓝点荟健康管理</div><div class="sub">中后台系统</div></div></div>
+    <nav class="nav">
+      <div class="nav-group">工作台</div>
+      <div class="nav-item active" data-page="dashboard"><span class="ic">📊</span>数据概览</div>
+      <div class="nav-group">客户与业务</div>
+      <div class="nav-item" data-page="customers"><span class="ic">👤</span>客户档案</div>
+      <div class="nav-item" data-page="plans"><span class="ic">🧬</span>干预方案</div>
+      <div class="nav-item" data-page="nutrition"><span class="ic">🥤</span>商品与配比</div>
+      <div class="nav-item" data-page="billing"><span class="ic">💰</span>收费与发票</div>
+      <div class="nav-item" data-page="survey"><span class="ic">📝</span>问卷中心</div>
+      <div class="nav-group">中台</div>
+      <div class="nav-item" data-page="approval"><span class="ic">✅</span>审批中心</div>
+      <div class="nav-item" data-page="ai"><span class="ic">🤖</span>AI 助手</div>
+      <div class="nav-item" data-page="roles"><span class="ic">🛡️</span>角色与权限</div>
+      <div class="nav-item" data-page="audit"><span class="ic">📋</span>审计日志</div>
+      <div class="nav-group">二期 · 集成与履约</div>
+      <div class="nav-item" data-page="prescription"><span class="ic">💊</span>电子处方</div>
+      <div class="nav-item" data-page="physical"><span class="ic">🏥</span>体检预约</div>
+      <div class="nav-item" data-page="meeting"><span class="ic">🎥</span>会议管理</div>
+      <div class="nav-item" data-page="logistics"><span class="ic">🚚</span>发货物流</div>
+      <div class="nav-item" data-page="device"><span class="ic">⌚</span>设备数据</div>
+    </nav>
+    <div class="side-foot">当前登录：<b>李医生</b>（健康管理师）<br>私域云 · 演示数据</div>
+  </aside>
+
+  <div class="main">
+    <div class="topbar">
+      <div class="title" id="page-title">数据概览</div>
+      <div class="right">
+        <div class="search-box"><input placeholder="全局搜索客户 / 方案 / 审批…"></div>
+        <div class="user-txt"><b>李医生</b>健康管理师</div>
+        <div class="avatar">李</div>
+      </div>
+    </div>
+
+    <div class="banner">✨ 蓝点荟<b>中后台系统</b>可交互原型 —— 覆盖客户档案、家庭/报告归集、收费节点、配比支付、审批、AI 助手。界面与数据均为示意。</div>
+
+    <div class="content">
+      <!-- 概览 -->
+      <section class="page" id="page-dashboard">
+        <div class="page-head"><div><h2>数据概览</h2><div class="desc">抗衰健康管理 · 客户、收入与干预效果一览</div></div>
+          <button class="btn solid">＋ 新建客户档案</button></div>
+        <div class="grid stat-grid">
+          <div class="card stat"><div class="label">客户总数</div><div class="value">128</div><div class="delta up">▲ 本月新增 8 人</div></div>
+          <div class="card stat"><div class="label">服务中客户</div><div class="value">36</div><div class="delta">进行中的干预疗程</div></div>
+          <div class="card stat"><div class="label">本月服务收入</div><div class="value">¥ 86,400</div><div class="delta up">▲ 较上月 +12%</div></div>
+          <div class="card stat"><div class="label">待办提醒</div><div class="value">9</div><div class="delta down">▼ 3 项今日到期</div></div>
+        </div>
+        <div class="grid two-col" style="margin-top:16px">
+          <div class="card">
+            <h3>近 6 个月服务收入</h3><div class="sub">单位：元</div>
+            <div class="chart-wrap" id="revenue-chart"></div>
+          </div>
+          <div class="card">
+            <h3>方案推进提醒</h3><div class="sub">随方案自动触发 · 提醒健康管理师 / 客服经理</div>
+            <div id="todo-list"></div>
+          </div>
+        </div>
+        <div class="grid two-col" style="margin-top:16px">
+          <div class="card"><h3>客户状态分布</h3><div class="sub">共 128 位客户</div><div id="status-bars"></div></div>
+          <div class="card"><h3>重点客户 · 干预效果</h3><div class="sub">最近一次检测较基线变化</div><div id="effect-list"></div></div>
+        </div>
+      </section>
+
+      <!-- 客户档案 -->
+      <section class="page" id="page-customers" style="display:none">
+        <div class="page-head"><div><h2>客户档案</h2><div class="desc">覆盖家庭多成员、跨机构报告归集、画像、方案、指标全维度</div></div>
+          <button class="btn solid">＋ 新建客户档案</button></div>
+        <div class="card">
+          <div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap">
+            <input id="c-search" placeholder="搜索姓名 / 电话 / 标签 / 归属…" style="flex:1;min-width:200px;padding:9px 13px;border:1px solid var(--line);border-radius:10px;font-size:13px;outline:none">
+            <select id="c-status" style="padding:9px 13px;border:1px solid var(--line);border-radius:10px;font-size:13px;color:var(--ink-2);outline:none">
+              <option value="">全部状态</option><option>潜客</option><option>服务中</option><option>已完成</option><option>流失</option></select>
+            <button class="btn" id="c-reset">重置</button>
+          </div>
+          <div style="overflow-x:auto"><table>
+            <thead><tr><th>客户</th><th>年龄/性别</th><th>标签</th><th>状态</th><th>归属客户经理</th><th>疗程</th><th>最近跟进</th></tr></thead>
+            <tbody id="c-body"></tbody></table>
+          </div>
+        </div>
+      </section>
+
+      <!-- 客户详情 -->
+      <section class="page" id="page-detail" style="display:none">
+        <div class="page-head"><div>
+          <button class="btn" id="back-btn">← 返回列表</button>
+          <h2 style="margin-top:10px" id="d-name">叶青总</h2>
+          <div class="desc" id="d-meta">男 · 68岁 · 归属：张经理</div>
+        </div><div style="display:flex;gap:8px"><button class="btn">导出档案</button><button class="btn solid">＋ 新增记录</button></div></div>
+        <div class="card" style="margin-bottom:16px">
+          <div class="tabs" id="d-tabs">
+            <button class="tab active" data-tab="profile">用户画像</button>
+            <button class="tab" data-tab="reports">体检报告</button>
+            <button class="tab" data-tab="metrics">身体指标</button>
+            <button class="tab" data-tab="plans">干预方案</button>
+            <button class="tab" data-tab="nutrition">营养配比</button>
+            <button class="tab" data-tab="consume">消费记录</button>
+            <button class="tab" data-tab="follow">跟进记录</button>
+          </div>
+          <div class="tab-pane active" id="pane-profile"></div>
+          <div class="tab-pane" id="pane-reports"></div>
+          <div class="tab-pane" id="pane-metrics"></div>
+          <div class="tab-pane" id="pane-plans"></div>
+          <div class="tab-pane" id="pane-nutrition"></div>
+          <div class="tab-pane" id="pane-consume"></div>
+          <div class="tab-pane" id="pane-follow"></div>
+        </div>
+      </section>
+
+      <!-- 干预方案 -->
+      <section class="page" id="page-plans" style="display:none">
+        <div class="page-head"><div><h2>干预方案</h2><div class="desc">分阶段干预方案 · 推进提醒 · 审定流程</div></div>
+          <button class="btn solid">＋ 新建方案</button></div>
+        <div class="card"><div style="overflow-x:auto"><table>
+          <thead><tr><th>客户</th><th>阶段</th><th>方案内容</th><th>状态</th><th>审定人</th><th>起止时间</th><th>推进提醒</th></tr></thead>
+          <tbody id="plans-body"></tbody></table></div></div>
+      </section>
+
+      <!-- 商品与配比 -->
+      <section class="page" id="page-nutrition" style="display:none">
+        <div class="page-head"><div><h2>商品与配比</h2><div class="desc">功能性食品 / 补剂配比 · 一键支付 · 仓配 / 京东履约</div></div>
+          <button class="btn solid">＋ 新建配比方案</button></div>
+        <div class="card"><div style="overflow-x:auto"><table>
+          <thead><tr><th>商品</th><th>品类</th><th>配比方案（怎么吃）</th><th>客户</th><th>金额</th><th>状态</th><th>操作</th></tr></thead>
+          <tbody id="nutrition-body"></tbody></table></div></div>
+      </section>
+
+      <!-- 收费与发票 -->
+      <section class="page" id="page-billing" style="display:none">
+        <div class="page-head"><div><h2>收费与发票</h2><div class="desc">收费节点（意向金 / 定金 / 按疗程）+ 电子发票</div></div>
+          <button class="btn solid">＋ 登记收费</button></div>
+        <div class="card"><div style="overflow-x:auto"><table>
+          <thead><tr><th>客户</th><th>收费节点</th><th>项目/套餐</th><th>金额</th><th>时间</th><th>收费人</th><th>发票</th></tr></thead>
+          <tbody id="billing-body"></tbody></table></div></div>
+      </section>
+
+      <!-- 审批中心 -->
+      <section class="page" id="page-approval" style="display:none">
+        <div class="page-head"><div><h2>审批中心</h2><div class="desc">采购 / 付款审批 · 金额分级 · 留痕可追溯</div></div></div>
+        <div class="grid two-col">
+          <div class="card"><h3>采购审批</h3><div class="sub">金额分级：≥ ¥50,000 报刘总 · 以下自动通过</div>
+            <table><thead><tr><th>申请</th><th>金额</th><th>状态</th><th>操作</th></tr></thead><tbody id="proc-body"></tbody></table></div>
+          <div class="card"><h3>付款审批</h3><div class="sub">大额提成 / 付款推送刘总一键审批</div>
+            <table><thead><tr><th>付款</th><th>金额</th><th>状态</th><th>操作</th></tr></thead><tbody id="pay-body"></tbody></table></div>
+        </div>
+      </section>
+
+      <!-- AI 助手 -->
+      <section class="page" id="page-ai" style="display:none">
+        <div class="page-head"><div><h2>AI 助手</h2><div class="desc">对话式数据查询 · 客服话术 · 健康评分（原型示意）</div></div></div>
+        <div class="card">
+          <div class="chat">
+            <div class="msgs" id="chat-msgs"></div>
+            <div class="input"><input id="chat-input" placeholder="试试问：叶总 FMT 第几个疗程？"><button class="btn solid" id="chat-send">发送</button></div>
+          </div>
+          <div class="sugg" id="chat-sugg"></div>
+        </div>
+      </section>
+
+      <!-- 角色权限 -->
+      <section class="page" id="page-roles" style="display:none">
+        <div class="page-head"><div><h2>角色与权限</h2><div class="desc">多角色协作，客户数据按归属关系隔离</div></div>
+          <button class="btn solid">＋ 新增角色</button></div>
+        <div class="card"><div style="overflow-x:auto"><table>
+          <thead><tr><th style="min-width:130px">角色</th><th>客户查看</th><th>客户编辑</th><th>报告管理</th><th>方案审定</th><th>收费登记</th><th>采购/审批</th><th>财务付款</th><th>报表</th><th>账号</th></tr></thead>
+          <tbody id="roles-body"></tbody></table></div></div>
+      </section>
+
+      <!-- 审计日志 -->
+      <section class="page" id="page-audit" style="display:none">
+        <div class="page-head"><div><h2>审计日志</h2><div class="desc">敏感数据操作全量留痕，可追溯</div></div></div>
+        <div class="card"><div style="overflow-x:auto"><table>
+          <thead><tr><th>时间</th><th>操作人</th><th>动作</th><th>对象</th><th>详情</th></tr></thead>
+          <tbody id="audit-body"></tbody></table></div></div>
+      </section>
+
+      <!-- 问卷中心 -->
+      <section class="page" id="page-survey" style="display:none">
+        <div class="page-head"><div><h2>问卷中心</h2><div class="desc">满意度问卷（服务质量考核）+ 客户自助健康问卷</div></div>
+          <button class="btn solid">＋ 新建问卷</button></div>
+        <div class="grid two-col">
+          <div class="card"><h3>满意度问卷</h3><div class="sub">阶段性推送客户打分，作为服务质量考核与提成结算依据</div>
+            <div style="overflow-x:auto"><table><thead><tr><th>客户</th><th>服务人</th><th>评分</th><th>状态</th></tr></thead><tbody id="survey-satisfy-body"></tbody></table></div></div>
+          <div class="card"><h3>自助健康问卷</h3><div class="sub">客户自助填写健康信息、上传历史报告，自动归档到档案</div>
+            <div style="overflow-x:auto"><table><thead><tr><th>客户</th><th>提交时间</th><th>内容摘要</th><th>状态</th></tr></thead><tbody id="survey-self-body"></tbody></table></div></div>
+        </div>
+      </section>
+
+      <!-- 电子处方 -->
+      <section class="page" id="page-prescription" style="display:none">
+        <div class="page-head"><div><h2>电子处方</h2><div class="desc"><span class="tag amber">二期 · 建设中</span> 全科医生开方 / 凭身份证号在线开方，合规购药</div></div>
+          <button class="btn">＋ 发起开方</button></div>
+        <div class="card"><div style="overflow-x:auto"><table>
+          <thead><tr><th>客户</th><th>开方医生</th><th>处方内容</th><th>状态</th><th>购药</th></tr></thead>
+          <tbody id="prescription-body"></tbody></table></div></div>
+      </section>
+
+      <!-- 体检预约 -->
+      <section class="page" id="page-physical" style="display:none">
+        <div class="page-head"><div><h2>公立医院体检预约</h2><div class="desc"><span class="tag amber">二期 · 建设中</span> 系统内发起体检套餐预约与收费，体检后专家线上对接</div></div>
+          <button class="btn">＋ 发起预约</button></div>
+        <div class="card"><div style="overflow-x:auto"><table>
+          <thead><tr><th>客户</th><th>体检套餐</th><th>医院</th><th>预约时间</th><th>收费</th><th>状态</th></tr></thead>
+          <tbody id="physical-body"></tbody></table></div></div>
+      </section>
+
+      <!-- 会议管理 -->
+      <section class="page" id="page-meeting" style="display:none">
+        <div class="page-head"><div><h2>会议管理</h2><div class="desc"><span class="tag amber">二期 · 建设中</span> 腾讯会议 / 钉钉生成链接，录音录像沉淀到档案</div></div>
+          <button class="btn">＋ 创建会议</button></div>
+        <div class="card"><div style="overflow-x:auto"><table>
+          <thead><tr><th>客户</th><th>会议主题</th><th>时间</th><th>会议链接</th><th>录音录像</th></tr></thead>
+          <tbody id="meeting-body"></tbody></table></div></div>
+      </section>
+
+      <!-- 发货物流 -->
+      <section class="page" id="page-logistics" style="display:none">
+        <div class="page-head"><div><h2>发货与物流</h2><div class="desc"><span class="tag amber">二期 · 建设中</span> 发货登记、快递跟踪、第三方代购物流</div></div>
+          <button class="btn">＋ 登记发货</button></div>
+        <div class="card"><div style="overflow-x:auto"><table>
+          <thead><tr><th>客户</th><th>商品</th><th>发货人</th><th>快递 / 单号</th><th>目的地</th><th>状态</th></tr></thead>
+          <tbody id="logistics-body"></tbody></table></div></div>
+      </section>
+
+      <!-- 设备数据 -->
+      <section class="page" id="page-device" style="display:none">
+        <div class="page-head"><div><h2>设备数据接入</h2><div class="desc"><span class="tag amber">二期 · 建设中</span> 智能手表 / 体外诊断设备数据采集集成到档案</div></div>
+          <button class="btn">＋ 绑定设备</button></div>
+        <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(230px,1fr))" id="device-body"></div>
+      </section>
+    </div>
+  </div>
+</div>
+
+<div class="tooltip" id="tip"></div>
+
+<script>
+const esc=s=>String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+const TAGS={'抗衰':'emerald','高净值':'amber','核心客户':'rose','慢病综合':'blue','痛风改善':'blue','精力管理':'green','血糖管理':'amber','潜客':'gray','已体检':'blue','流失':'gray'};
+const STATUS={'服务中':'emerald','已完成':'green','潜客':'gray','流失':'rose'};
+const PLAN_STATUS={'已完成':'green','进行中':'emerald','规划中':'gray'};
+
+const CUSTOMERS=[
+  { name:'叶青总', gender:'男', age:68, phone:'138****8888', tags:['高净值','抗衰','核心客户'], status:'服务中',
+    manager:'张经理', refName:'—', course:'第三疗程', last:'2026-10-12',
+    family:['叶青总（本人）','女儿 叶女士'],
+    profile:{ 职业:'企业家（已财富自由）', 收入水平:'高净值', 主诉求:'抗衰 + 慢病综合管理', 健康状况:'长期慢性病，多药并服', 慢性病史:'高血压、高血脂、高血糖', 生活方式:'饮食应酬多、运动少', 用药史:'长期服用多种慢性病西药', 主诉:'曾走 50 米即需休息' },
+    reports:[
+      {type:'宏基因菌群报告', date:'2026-02', src:'机构 A', items:'肠道菌群基线', files:3},
+      {type:'历年体检报告', date:'2020-2025', src:'多家医院', items:'血压 / 血脂 / 血糖 / 肝肾功能', files:8},
+      {type:'其他健康管理机构报告', date:'2025-11', src:'机构 B', items:'抗衰相关指标', files:2},
+    ],
+    metrics:{ dates:['2026-03','2026-06','2026-08','2026-10'],
+      尿酸:{label:'尿酸',unit:'μmol/L',ref:420,color:'#2a78d6',values:[560,455,398,342]},
+      空腹血糖:{label:'空腹血糖',unit:'mmol/L',ref:6.1,color:'#eb6834',values:[7.8,7.0,6.3,5.9]},
+      总胆固醇:{label:'总胆固醇',unit:'mmol/L',ref:5.2,color:'#1baf7a',values:[6.5,6.0,5.6,5.1]} },
+    plans:[
+      {stage:'一阶', name:'肠道菌群调理（长菌 / FMT）', status:'已完成', approver:'王博士', range:'2026-03 ~ 2026-06', remind:'—'},
+      {stage:'二阶', name:'血液净化 + 补剂 + 生活指导', status:'进行中', approver:'王博士', range:'2026-07 ~ 至今', remind:'提醒客服经理推进复检'},
+      {stage:'三阶', name:'细胞技术长期计划（抗衰）', status:'规划中', approver:'待审定', range:'待定', remind:'提醒健康管理师安排方案审定'},
+    ],
+    nutrition:[
+      {product:'N 系列 · 益生菌', cat:'功能性食品', plan:'早晚各 1 袋，餐后 30 分钟', amount:'¥1,280/月', status:'已推送付款'},
+      {product:'畅系列 · 膳食纤维', cat:'功能性食品', plan:'每日 1 袋，随餐', amount:'¥680/月', status:'已生效'},
+    ],
+    billings:[
+      {node:'意向金', item:'健康管理意向', amount:'¥2,000', date:'2026-02-20', payer:'张经理', invoice:'已开（电子）'},
+      {node:'疗程定金', item:'一阶疗程定金', amount:'¥5,000', date:'2026-03-02', payer:'张经理', invoice:'已开（电子）'},
+      {node:'按疗程', item:'一阶套餐（含会诊）', amount:'¥20,000', date:'2026-03-10', payer:'张经理', invoice:'已开（电子）'},
+      {node:'按疗程', item:'二阶首期', amount:'¥12,000', date:'2026-07-05', payer:'张经理', invoice:'待开'},
+    ],
+    followups:[
+      {date:'2026-10-12', type:'复诊', content:'三阶（抗衰）方案评估，状态优于同龄', next:'安排细胞技术方案审定'},
+      {date:'2026-09-20', type:'检测', content:'完成血液检测，指标较基线明显下降', next:'整理检测报告'},
+    ],
+    effects:[{k:'尿酸',from:'560',to:'342',unit:'μmol/L',pct:'-39%',good:true},{k:'空腹血糖',from:'7.8',to:'5.9',unit:'mmol/L',pct:'-24%',good:true}],
+  },
+  { name:'周女士', gender:'女', age:55, phone:'139****9999', tags:['抗衰','精力管理'], status:'服务中',
+    manager:'李医生', refName:'叶青总', course:'第二疗程', last:'2026-10-16',
+    family:['周女士（本人）'],
+    profile:{ 主诉求:'抗衰、精力提升', 健康状况:'整体良好，偶有疲劳', 来源:'叶青总转介绍' },
+    reports:[{type:'宏基因菌群报告', date:'2026-06', src:'机构 A', items:'菌群基线', files:2}],
+    plans:[{stage:'一阶', name:'肠道菌群调理', status:'已完成', approver:'王博士', range:'2026-06 ~ 2026-08', remind:'—'},
+           {stage:'二阶', name:'补剂 + 抗衰方案', status:'进行中', approver:'王博士', range:'2026-09 ~ 至今', remind:'提醒健康管理师安排复检'}],
+    nutrition:[{product:'N 系列 · 益生菌', cat:'功能性食品', plan:'早晚各 1 袋', amount:'¥1,280/月', status:'已生效'}],
+    billings:[{node:'意向金', item:'健康管理意向', amount:'¥2,000', date:'2026-05-18', payer:'李医生', invoice:'已开（电子）'},
+              {node:'按疗程', item:'一阶套餐', amount:'¥20,000', date:'2026-06-01', payer:'李医生', invoice:'已开（电子）'}],
+    followups:[{date:'2026-10-16', type:'跟进', content:'精力明显提升，进入二阶抗衰方案', next:'安排复检'}],
+    effects:[{k:'精力状态',from:'易疲劳',to:'明显改善',unit:'主观',pct:'改善',good:true}],
+  },
+  { name:'刘清风总', gender:'男', age:70, phone:'139****6666', tags:['痛风改善','抗衰'], status:'服务中',
+    manager:'李医生', refName:'王女士', course:'第三疗程', last:'2026-10-08',
+    family:['刘清风总（本人）'],
+    profile:{ 健康状况:'痛风、阿尔兹海默症相关指标', 主诉求:'慢病逆转 + 抗衰', 用药史:'痛风及慢病相关用药' },
+    reports:[{type:'历年体检报告', date:'2021-2025', src:'多家医院', items:'尿酸 / 认知相关指标', files:6}],
+    plans:[{stage:'三阶', name:'细胞技术长期计划', status:'进行中', approver:'王博士', range:'2026-04 ~ 至今', remind:'提醒健康管理师跟进指标'}],
+    nutrition:[{product:'N 系列 · 益生菌', cat:'功能性食品', plan:'早晚各 1 袋', amount:'¥1,280/月', status:'已生效'}],
+    billings:[{node:'按疗程', item:'三阶套餐', amount:'¥30,000', date:'2026-04-12', payer:'李医生', invoice:'已开（电子）'}],
+    followups:[{date:'2026-10-08', type:'复诊', content:'痛风、阿尔兹海默症相关指标均下降', next:'持续跟进'}],
+    effects:[{k:'尿酸',from:'520',to:'360',unit:'μmol/L',pct:'-31%',good:true}],
+  },
+  { name:'王大姐', gender:'女', age:57, phone:'137****5555', tags:['抗衰','精力管理'], status:'已完成',
+    manager:'李医生', refName:'—', course:'已完成 4 疗程', last:'2026-08-30',
+    family:['王大姐（本人）'],
+    profile:{ 主诉求:'抗衰、精力管理', 生活方式:'退休，注重健康' },
+    reports:[{type:'体检报告', date:'2025-2026', src:'公立医院', items:'常规 + 炎症指标', files:4}],
+    plans:[{stage:'一~四阶', name:'全程干预（4 个疗程）', status:'已完成', approver:'王博士', range:'2025-06 ~ 2026-08', remind:'—'}],
+    nutrition:[{product:'畅系列 · 膳食纤维', cat:'功能性食品', plan:'每日 1 袋', amount:'¥680/月', status:'已生效'}],
+    billings:[{node:'按疗程', item:'全程套餐', amount:'¥48,000', date:'2025-06-20', payer:'李医生', invoice:'已开（电子）'}],
+    followups:[{date:'2026-08-30', type:'售后', content:'独立盯装修全程无疲惫感，精力接近年轻人', next:'季度回访'}],
+    effects:[{k:'精力状态',from:'易疲劳',to:'接近年轻人',unit:'主观',pct:'显著',good:true}],
+  },
+  { name:'陈先生', gender:'男', age:52, phone:'136****1111', tags:['潜客','已体检'], status:'潜客',
+    manager:'张经理', refName:'叶青总', course:'待定方案', last:'2026-10-15',
+    family:['陈先生（本人）'],
+    profile:{ 健康状况:'体检发现血脂偏高', 主诉求:'预防性抗衰', 来源:'叶青总转介绍' },
+    reports:[{type:'体检报告', date:'2026-10', src:'公立医院', items:'血脂 / 血糖', files:2}],
+    plans:[], nutrition:[], billings:[],
+    followups:[{date:'2026-10-15', type:'会诊', content:'已收集体检报告，待专家审定初步方案', next:'生成方案框架'}],
+  },
+  { name:'李女士', gender:'女', age:63, phone:'135****2222', tags:['血糖管理'], status:'服务中',
+    manager:'李医生', refName:'—', course:'第一疗程', last:'2026-10-09',
+    family:['李女士（本人）'],
+    profile:{ 健康状况:'2 型糖尿病多年', 主诉求:'减少降糖药用量' },
+    reports:[{type:'历年体检报告', date:'2022-2026', src:'多家医院', items:'血糖 / 糖化血红蛋白', files:7}],
+    plans:[{stage:'一阶', name:'肠道菌群调理', status:'进行中', approver:'王博士', range:'2026-09 ~ 至今', remind:'提醒健康管理师安排复查'}],
+    nutrition:[], billings:[{node:'按疗程', item:'一阶套餐', amount:'¥30,000', date:'2026-09-15', payer:'李医生', invoice:'待开'}],
+    followups:[{date:'2026-10-09', type:'跟进', content:'一阶疗程中，血糖有下降趋势', next:'复查空腹血糖'}],
+  },
+  { name:'赵女士', gender:'女', age:60, phone:'133****3333', tags:['流失'], status:'流失',
+    manager:'张经理', refName:'—', course:'—', last:'2026-05-11',
+    family:['赵女士（本人）'], profile:{}, reports:[], plans:[], nutrition:[], billings:[],
+    followups:[{date:'2026-05-11', type:'备注', content:'预算原因暂缓，标记流失，保留档案', next:'—'}],
+  },
+];
+
+const TODO=[
+  {dot:'urgent', t:'叶青总 · 三阶方案审定', d:'健康管理师 李医生 · 今日到期'},
+  {dot:'normal', t:'陈先生 · 生成方案框架', d:'客服经理 张经理 · 明日'},
+  {dot:'soon', t:'周女士 · 复检预约', d:'健康管理师 李医生 · 3 天后'},
+  {dot:'normal', t:'李女士 · 复查空腹血糖', d:'客服经理 · 本周'},
+];
+const PROC=[
+  {n:'功能性食品采购（N 系列）', a:'¥50,000', s:'待刘总审批', big:true},
+  {n:'补剂采购（畅系列）', a:'¥18,000', s:'自动通过', big:false},
+  {n:'检测耗材采购', a:'¥6,500', s:'自动通过', big:false},
+];
+const PAY=[
+  {n:'王博士 · 方案审定费', a:'¥12,000', s:'待审批'},
+  {n:'张经理 · 月度提成', a:'¥30,000', s:'待审批'},
+  {n:'京东代购款', a:'¥8,400', s:'已审批'},
+];
+const ROLES=[
+  {r:'系统管理员', v:'全部', e:'全部', rp:'全部', ap:'全部', pay:'全部', pr:'全部', fin:'全部', rpt:'全部', acc:'全部'},
+  {r:'健康管理师', v:'归属客户', e:'归属客户', rp:'归属客户', ap:'提交/协同', pay:'登记', pr:'—', fin:'—', rpt:'归属', acc:'—'},
+  {r:'客户经理（客服经理）', v:'归属客户', e:'归属客户', rp:'归属客户', ap:'查看', pay:'登记', pr:'发起', fin:'—', rpt:'归属', acc:'—'},
+  {r:'推荐人', v:'归属（脱敏）', e:'—', rp:'查看', ap:'查看', pay:'查看', pr:'—', fin:'—', rpt:'—', acc:'—'},
+  {r:'档案管理员', v:'全部', e:'归属客户', rp:'全部', ap:'—', pay:'—', pr:'—', fin:'—', rpt:'—', acc:'—'},
+  {r:'兼职审核医生', v:'指定客户', e:'只读', rp:'查看', ap:'审定', pay:'—', pr:'—', fin:'—', rpt:'—', acc:'—'},
+  {r:'采购人员', v:'按需只读', e:'—', rp:'查看', ap:'—', pay:'—', pr:'采购执行', fin:'—', rpt:'—', acc:'—'},
+  {r:'财务/审批（刘总）', v:'—', e:'—', rp:'—', ap:'—', pay:'查看', pr:'审批', fin:'一键审批', rpt:'全部', acc:'—'},
+  {r:'考核管理岗', v:'只读', e:'—', rp:'—', ap:'—', pay:'查看', pr:'—', fin:'—', rpt:'全部', acc:'—'},
+];
+const AUDIT=[
+  {t:'2026-10-16 14:32', u:'李医生', a:'编辑客户档案', o:'叶青总', d:'更新三阶方案状态为「进行中」'},
+  {t:'2026-10-15 11:08', u:'张经理', a:'上传检测报告', o:'陈先生', d:'上传体检报告（血脂/血糖，2 份）'},
+  {t:'2026-10-14 09:40', u:'王博士', a:'方案审定', o:'叶青总', d:'审定通过三阶抗衰方案'},
+  {t:'2026-10-13 16:20', u:'刘总', a:'付款审批', o:'京东代购款', d:'一键审批通过 ¥8,400'},
+  {t:'2026-10-12 15:55', u:'张经理', a:'推送付款', o:'叶青总', d:'推送 N 系列配比方案付款'},
+  {t:'2026-10-12 10:12', u:'系统', a:'开具电子发票', o:'叶青总', d:'自动开具电子发票并推送客户'},
+];
+
+document.getElementById('login-btn').onclick=()=>{ document.getElementById('login').style.display='none'; document.getElementById('app').classList.add('on'); };
+
+const PAGES=['dashboard','customers','detail','plans','nutrition','billing','survey','approval','ai','roles','audit','prescription','physical','meeting','logistics','device'];
+const TITLES={ dashboard:'数据概览', customers:'客户档案', detail:'客户档案详情', plans:'干预方案', nutrition:'商品与配比', billing:'收费与发票', survey:'问卷中心', approval:'审批中心', ai:'AI 助手', roles:'角色与权限', audit:'审计日志', prescription:'电子处方', physical:'体检预约', meeting:'会议管理', logistics:'发货物流', device:'设备数据' };
+function showPage(p){
+  PAGES.forEach(x=>{ document.getElementById('page-'+x).style.display=(x===p)?'':'none'; });
+  document.getElementById('page-title').textContent=TITLES[p];
+  document.querySelectorAll('.nav-item').forEach(n=>{ n.classList.toggle('active', n.dataset.page===p || (p==='detail'&&n.dataset.page==='customers')); });
+  window.scrollTo(0,0);
+}
+document.querySelectorAll('.nav-item').forEach(n=>{ n.onclick=()=>showPage(n.dataset.page); });
+document.getElementById('back-btn').onclick=()=>showPage('customers');
+
+/* 概览 */
+function renderRevenue(){
+  const data=[52000,64000,61000,78000,74000,86400], labels=['5月','6月','7月','8月','9月','10月'];
+  const W=720,H=220,padL=48,padB=30,padT=12,padR=8, max=Math.max(...data)*1.12, iw=W-padL-padR, ih=H-padT-padB, bw=iw/data.length;
+  let g=`<svg viewBox="0 0 ${W} ${H}" width="100%" height="220" preserveAspectRatio="xMidYMid meet" role="img" aria-label="近六个月服务收入">`;
+  for(let i=0;i<=3;i++){ const y=padT+ih*i/3, v=Math.round(max*i/3);
+    g+=`<line x1="${padL}" y1="${y}" x2="${W-padR}" y2="${y}" stroke="#e1e0d9" stroke-width="1"/><text x="${padL-8}" y="${y+4}" text-anchor="end" font-size="11" fill="#94a3b8">${(v/10000).toFixed(1)}万</text>`; }
+  data.forEach((d,i)=>{ const h=d/max*ih, x=padL+i*bw+bw*0.28, y=padT+ih-h;
+    g+=`<rect x="${x}" y="${y}" width="${bw*0.44}" height="${h}" rx="4" fill="#2a78d6"/><text x="${x+bw*0.22}" y="${y-6}" text-anchor="middle" font-size="11" fill="#475569">${(d/10000).toFixed(1)}万</text><text x="${x+bw*0.22}" y="${H-8}" text-anchor="middle" font-size="11" fill="#94a3b8">${labels[i]}</text>`; });
+  g+='</svg>'; document.getElementById('revenue-chart').innerHTML=g;
+}
+function renderTodo(){
+  document.getElementById('todo-list').innerHTML=TODO.map(t=>`<div class="todo"><div class="dot ${t.dot}"></div><div><div class="t">${t.t}</div><div class="d">${t.d}</div></div></div>`).join('');
+}
+function renderStatusBars(){
+  const rows=[['服务中',36,'#059669'],['已完成',52,'#0ca30c'],['潜客',28,'#94a3b8'],['流失',12,'#cbd5e1']];
+  document.getElementById('status-bars').innerHTML=rows.map(r=>`<div class="bar-row"><div class="nm">${r[0]}</div><div class="track"><div class="fill" style="width:${Math.round(r[1]/0.52)}%;background:${r[2]}"></div></div><div class="val">${r[1]}</div></div>`).join('');
+}
+function renderEffects(){
+  const c=CUSTOMERS[0];
+  document.getElementById('effect-list').innerHTML=(c.effects||[]).map(e=>`<div class="bar-row" style="margin-bottom:8px"><div class="nm">${e.k}</div><div class="track"><div class="fill" style="width:${e.good?78:40}%;background:${e.good?'#1baf7a':'#eb6834'}"></div></div><div class="val" style="width:auto;flex:none;font-size:12px;color:${e.good?'#15803d':'#b45309'}">${e.from} → ${e.to} ${e.unit}（${e.pct}）</div></div>`).join('');
+}
+renderRevenue(); renderTodo(); renderStatusBars(); renderEffects();
+
+/* 客户列表 */
+function renderCustomers(){
+  const kw=(document.getElementById('c-search').value||'').trim().toLowerCase(), st=document.getElementById('c-status').value;
+  const list=CUSTOMERS.filter(c=>{ const hit=kw?[c.name,c.phone,c.tags.join(' '),c.manager,c.status].join(' ').toLowerCase().includes(kw):true; return hit&&(!st||c.status===st); });
+  document.getElementById('c-body').innerHTML=list.map(c=>`<tr data-i="${CUSTOMERS.indexOf(c)}"><td><b>${esc(c.name)}</b><div style="color:var(--muted);font-size:12px">${esc(c.phone)}</div></td><td>${c.age}岁 / ${c.gender}</td><td>${(c.tags||[]).map(t=>`<span class="tag ${TAGS[t]||'gray'}">${t}</span>`).join(' ')}</td><td><span class="tag ${STATUS[c.status]||'gray'}">${c.status}</span></td><td>${esc(c.manager)}</td><td>${esc(c.course)}</td><td>${esc(c.last)}</td></tr>`).join('')||'<tr><td colspan="7" class="empty">无匹配客户</td></tr>';
+}
+document.getElementById('c-body').onclick=e=>{ const tr=e.target.closest('tr'); if(tr&&tr.dataset.i!=null) openDetail(Number(tr.dataset.i)); };
+document.getElementById('c-search').oninput=renderCustomers;
+document.getElementById('c-status').onchange=renderCustomers;
+document.getElementById('c-reset').onclick=()=>{ document.getElementById('c-search').value=''; document.getElementById('c-status').value=''; renderCustomers(); };
+renderCustomers();
+
+/* 客户详情 */
+let cur=0;
+function openDetail(i){ cur=i; showPage('detail'); renderDetail(); }
+function renderDetail(){
+  const c=CUSTOMERS[cur];
+  document.getElementById('d-name').textContent=c.name;
+  document.getElementById('d-meta').textContent=`${c.gender} · ${c.age}岁 · ${(c.tags||[]).join(' / ')} · 归属：${c.manager}`;
+  const p=c.profile||{};
+  document.getElementById('pane-profile').innerHTML=`
+    <div class="card" style="box-shadow:none;border:0;padding:0;margin-bottom:16px">
+      <h3>家庭成员</h3><div class="sub">家庭多成员档案，一键切换</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">${(c.family||[]).map((f,i)=>`<span class="tag ${i===0?'emerald':'blue'}" style="padding:6px 13px;font-size:13px">${esc(f)}</span>`).join('')}<button class="btn" style="padding:5px 11px;font-size:12px">＋ 添加成员</button></div>
+    </div>
+    <div class="kv">${[['姓名',c.name],['性别/年龄',`${c.gender} · ${c.age}岁`],['手机号',c.phone],['归属客户经理',c.manager],['推荐人',c.refName||'—'],['客户状态',c.status],['职业',p.职业||'—'],['收入水平',p.收入水平||'—'],['主诉求',p.主诉求||'—'],['健康状况',p.健康状况||'—'],['慢性病史',p.慢性病史||'—'],['生活方式',p.生活方式||'—'],['用药史',p.用药史||'—'],['主诉',p.主诉||'—'],['关联小程序',c.name==='叶青总'?'已关联 openid（预留）':'未关联']].map(([k,v])=>`<div><div class="k">${k}</div><div class="v">${esc(v)}</div></div>`).join('')}</div>`;
+  document.getElementById('pane-reports').innerHTML=(c.reports||[]).length?`
+    <table><thead><tr><th>报告类型</th><th>检测时间</th><th>来源机构</th><th>关键指标</th><th>附件</th></tr></thead><tbody>
+    ${c.reports.map(r=>`<tr><td><b>${esc(r.type)}</b></td><td>${esc(r.date)}</td><td>${esc(r.src)}</td><td>${esc(r.items)}</td><td><span class="tag blue">${r.files} 份</span></td></tr>`).join('')}
+    </tbody></table><div class="sub" style="color:var(--muted);margin-top:12px">✓ 已跨机构归集去重，多版本报告统一管理</div>`
+    :'<div class="empty">暂无体检报告，点击右上角「新增记录」上传</div>';
+  document.getElementById('pane-plans').innerHTML=(c.plans||[]).length?`
+    <table><thead><tr><th>阶段</th><th>方案</th><th>状态</th><th>审定人</th><th>起止时间</th><th>推进提醒</th></tr></thead><tbody>
+    ${c.plans.map(p=>`<tr><td><span class="tag blue">${p.stage}</span></td><td><b>${esc(p.name)}</b></td><td><span class="tag ${PLAN_STATUS[p.status]||'gray'}">${p.status}</span></td><td>${esc(p.approver)}</td><td>${esc(p.range)}</td><td>${p.remind==='—'?'<span style="color:var(--muted)">—</span>':`<span class="tag amber">${esc(p.remind)}</span>`}</td></tr>`).join('')}
+    </tbody></table>`:'<div class="empty">暂无干预方案</div>';
+  document.getElementById('pane-nutrition').innerHTML=(c.nutrition||[]).length?`
+    <table><thead><tr><th>商品</th><th>品类</th><th>配比方案</th><th>金额</th><th>状态</th><th>操作</th></tr></thead><tbody>
+    ${c.nutrition.map(n=>`<tr><td><b>${esc(n.product)}</b></td><td><span class="tag violet">${esc(n.cat)}</span></td><td>${esc(n.plan)}</td><td>${esc(n.amount)}</td><td><span class="tag ${n.status.includes('推送')?'amber':'green'}">${esc(n.status)}</span></td><td><button class="btn" style="padding:5px 11px;font-size:12px">${n.status.includes('推送')?'查看付款':'一键支付'}</button></td></tr>`).join('')}
+    </tbody></table>`:'<div class="empty">暂无配比方案，去「商品与配比」页新建</div>';
+  document.getElementById('pane-consume').innerHTML=(c.billings||[]).length?`
+    <table><thead><tr><th>收费节点</th><th>项目/套餐</th><th>金额</th><th>时间</th><th>收费人</th><th>发票</th></tr></thead><tbody>
+    ${c.billings.map(x=>`<tr><td><span class="tag ${x.node==='意向金'?'amber':x.node==='疗程定金'?'blue':'emerald'}">${esc(x.node)}</span></td><td>${esc(x.item)}</td><td><b>${esc(x.amount)}</b></td><td>${esc(x.date)}</td><td>${esc(x.payer)}</td><td><span class="tag ${x.invoice.startsWith('已开')?'green':'amber'}">${esc(x.invoice)}</span></td></tr>`).join('')}
+    </tbody></table>`:'<div class="empty">暂无消费记录</div>';
+  document.getElementById('pane-follow').innerHTML=(c.followups||[]).length?`
+    <table><thead><tr><th>时间</th><th>类型</th><th>内容</th><th>下一步</th></tr></thead><tbody>
+    ${c.followups.map(f=>`<tr><td>${esc(f.date)}</td><td><span class="tag emerald">${esc(f.type)}</span></td><td>${esc(f.content)}</td><td style="color:var(--muted)">${esc(f.next)}</td></tr>`).join('')}
+    </tbody></table>`:'<div class="empty">暂无跟进记录</div>';
+  if(c.metrics) renderMetrics(c.metrics); else document.getElementById('pane-metrics').innerHTML='<div class="empty">暂无身体指标数据</div>';
+}
+document.getElementById('d-tabs').onclick=e=>{ const t=e.target.closest('.tab'); if(!t)return;
+  document.querySelectorAll('#d-tabs .tab').forEach(x=>x.classList.remove('active'));
+  document.querySelectorAll('.tab-pane').forEach(x=>x.classList.remove('active'));
+  t.classList.add('active'); document.getElementById('pane-'+t.dataset.tab).classList.add('active'); };
+
+/* 指标趋势 */
+let curMetric='尿酸';
+function scoreCard(m){
+  const keys=Object.keys(m).filter(k=>k!=='dates');
+  const dims=keys.map(k=>{ const v=m[k].values; const imp=(v[0]-v[v.length-1])/v[0]; const sc=Math.round(Math.max(0,Math.min(100,60+imp*90))); return {k:m[k].label,sc}; });
+  const avg=Math.round(dims.reduce((s,d)=>s+d.sc,0)/dims.length);
+  return `<div style="border:1px solid var(--brand-line);background:linear-gradient(120deg,#ecfdf5,#f0fdfa);border-radius:14px;padding:16px 18px;margin-bottom:16px">
+    <div style="display:flex;align-items:center;gap:26px;flex-wrap:wrap">
+      <div style="text-align:center;min-width:120px">
+        <div style="font-size:11px;color:var(--muted)">AI 综合健康评分</div>
+        <div style="font-size:40px;font-weight:800;color:var(--brand-700);line-height:1.1">${avg}<span style="font-size:15px;color:var(--muted)">/100</span></div>
+        <div class="delta up" style="font-size:12px">▲ 干预效果持续改善</div>
+      </div>
+      <div style="flex:1;min-width:220px">${dims.map(d=>`<div class="bar-row" style="margin-bottom:6px"><div class="nm" style="width:80px;flex:0 0 80px">${d.k}</div><div class="track"><div class="fill" style="width:${d.sc}%;background:linear-gradient(90deg,#34d399,#059669)"></div></div><div class="val">${d.sc}</div></div>`).join('')}</div>
+      <div style="max-width:210px;font-size:12px;color:var(--ink-2)">AI 评估：各项指标较基线明显回落，抗衰与代谢改善显著，建议维持当前方案并定期复检。</div>
+    </div></div>`;
+}
+function renderMetrics(m){
+  document.getElementById('pane-metrics').innerHTML=scoreCard(m)+`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:10px">
+    <div class="seg" id="metric-seg">${Object.keys(m).filter(k=>k!=='dates').map(k=>`<button class="${k===curMetric?'active':''}" data-m="${k}">${m[k].label}</button>`).join('')}</div>
+    <div style="color:var(--muted);font-size:12px">灰色虚线为「正常上限」，数值下降代表干预有效</div></div>
+    <div class="chart-wrap" id="metric-chart" style="position:relative"></div>`;
+  document.getElementById('metric-seg').onclick=e=>{ const b=e.target.closest('button'); if(b){ curMetric=b.dataset.m; renderMetrics(m); } };
+  drawMetricChart(m);
+}
+function drawMetricChart(m){
+  const d=m[curMetric], dates=m.dates, W=720,H=260,padL=52,padB=30,padT=16,padR=16;
+  const all=[...d.values,d.ref]; let min=Math.min(...all),max=Math.max(...all); const span=max-min||1; min-=span*.15; max+=span*.15;
+  const iw=W-padL-padR, ih=H-padT-padB, X=i=>padL+iw*i/(dates.length-1), Y=v=>padT+ih*(1-(v-min)/(max-min));
+  const pts=d.values.map((v,i)=>[X(i),Y(v)]), path=pts.map((p,i)=>(i?'L':'M')+p[0].toFixed(1)+' '+p[1].toFixed(1)).join(' ');
+  const area=`${path} L ${pts[pts.length-1][0].toFixed(1)} ${(padT+ih).toFixed(1)} L ${pts[0][0].toFixed(1)} ${(padT+ih).toFixed(1)} Z`, refY=Y(d.ref);
+  let g=`<svg viewBox="0 0 ${W} ${H}" width="100%" height="260" preserveAspectRatio="xMidYMid meet" role="img" aria-label="${d.label}趋势">`;
+  for(let i=0;i<=4;i++){ const y=padT+ih*i/4, v=max-(max-min)*i/4; g+=`<line x1="${padL}" y1="${y}" x2="${W-padR}" y2="${y}" stroke="#e1e0d9" stroke-width="1"/><text x="${padL-8}" y="${y+4}" text-anchor="end" font-size="11" fill="#94a3b8">${v.toFixed(0)}</text>`; }
+  dates.forEach((t,i)=>{ g+=`<text x="${X(i)}" y="${H-8}" text-anchor="middle" font-size="11" fill="#94a3b8">${t}</text>`; });
+  g+=`<line x1="${padL}" y1="${refY}" x2="${W-padR}" y2="${refY}" stroke="#c3c2b7" stroke-width="1.5" stroke-dasharray="5 4"/><text x="${W-padR}" y="${refY-6}" text-anchor="end" font-size="11" fill="#94a3b8">正常上限 ${d.ref}${d.unit}</text>`;
+  g+=`<path d="${area}" fill="${d.color}" opacity="0.10"/><path d="${path}" fill="none" stroke="${d.color}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>`;
+  pts.forEach((p,i)=>{ g+=`<circle cx="${p[0]}" cy="${p[1]}" r="4.5" fill="#fff" stroke="${d.color}" stroke-width="2.5"/><text x="${p[0]}" y="${p[1]-10}" text-anchor="middle" font-size="11" font-weight="600" fill="#0f172a">${d.values[i]}</text>`; });
+  const lp=pts[pts.length-1]; g+=`<text x="${Math.min(lp[0],W-padR-40)}" y="${12}" text-anchor="end" font-size="12" font-weight="700" fill="${d.color}">${d.label} ${d.values[d.values.length-1]}${d.unit}</text>`;
+  g+='</svg>'; document.getElementById('metric-chart').innerHTML=g;
+  const wrap=document.getElementById('metric-chart');
+  wrap.onmousemove=e=>{ const svg=wrap.querySelector('svg'); if(!svg)return; const rect=svg.getBoundingClientRect(); const mx=(e.clientX-rect.left)/rect.width*W;
+    let idx=0; dates.forEach((_,i)=>{ if(Math.abs(mx-X(i))<Math.abs(mx-X(idx))) idx=i; });
+    const tip=document.getElementById('tip'), base=d.values[0], now=d.values[idx], delta=Math.round((now-base)/base*100);
+    tip.innerHTML=`<b>${d.label}</b><br>${dates[idx]}：${now} ${d.unit}<br>较基线 ${delta>=0?'+':''}${delta}%（基线 ${base}）`;
+    tip.style.display='block'; const x=e.clientX+14,y=e.clientY+14; tip.style.left=Math.min(x,window.innerWidth-210)+'px'; tip.style.top=y+'px';
+    let old=svg.querySelector('.cross'); if(!old){ old=document.createElementNS('http://www.w3.org/2000/svg','g'); old.setAttribute('class','cross'); svg.appendChild(old);} old.innerHTML=`<line x1="${X(idx)}" y1="${padT}" x2="${X(idx)}" y2="${padT+ih}" stroke="#94a3b8" stroke-width="1" stroke-dasharray="3 3"/>`; };
+  wrap.onmouseleave=()=>{ document.getElementById('tip').style.display='none'; const s=wrap.querySelector('svg'); if(s){ const o=s.querySelector('.cross'); if(o)o.remove(); } };
+}
+
+/* 方案 / 配比 / 收费 / 审批 / 角色 / 审计 */
+const PLANS=[]; CUSTOMERS.forEach(c=>{(c.plans||[]).forEach(p=>PLANS.push({name:c.name,...p}));});
+document.getElementById('plans-body').innerHTML=PLANS.map(p=>`<tr><td><b>${esc(p.name)}</b></td><td><span class="tag blue">${esc(p.stage)}</span></td><td>${esc(p.name)}</td><td><span class="tag ${PLAN_STATUS[p.status]||'gray'}">${p.status}</span></td><td>${esc(p.approver)}</td><td>${esc(p.range)}</td><td>${p.remind==='—'?'<span style="color:var(--muted)">—</span>':`<span class="tag amber">${esc(p.remind)}</span>`}</td></tr>`).join('');
+
+const NUTR=[]; CUSTOMERS.forEach(c=>{(c.nutrition||[]).forEach(n=>NUTR.push({name:c.name,...n}));});
+document.getElementById('nutrition-body').innerHTML=NUTR.map(n=>`<tr><td><b>${esc(n.product)}</b></td><td><span class="tag violet">${esc(n.cat)}</span></td><td>${esc(n.plan)}</td><td>${esc(n.name)}</td><td>${esc(n.amount)}</td><td><span class="tag ${n.status.includes('推送')?'amber':'green'}">${esc(n.status)}</span></td><td><button class="btn" style="padding:5px 11px;font-size:12px">${n.status.includes('推送')?'查看付款':'一键支付'}</button></td></tr>`).join('');
+
+const BILL=[]; CUSTOMERS.forEach(c=>{(c.billings||[]).forEach(b=>BILL.push({name:c.name,...b}));});
+document.getElementById('billing-body').innerHTML=BILL.map(x=>`<tr><td><b>${esc(x.name)}</b></td><td><span class="tag ${x.node==='意向金'?'amber':x.node==='疗程定金'?'blue':'emerald'}">${esc(x.node)}</span></td><td>${esc(x.item)}</td><td><b>${esc(x.amount)}</b></td><td>${esc(x.date)}</td><td>${esc(x.payer)}</td><td><span class="tag ${x.invoice.startsWith('已开')?'green':'amber'}">${esc(x.invoice)}</span></td></tr>`).join('');
+
+document.getElementById('proc-body').innerHTML=PROC.map(p=>`<tr><td>${esc(p.n)}</td><td><b>${esc(p.a)}</b></td><td><span class="tag ${p.s==='待刘总审批'?'rose':'green'}">${esc(p.s)}</span></td><td>${p.s==='待刘总审批'?'<button class="btn solid" style="padding:5px 11px;font-size:12px">审批</button>':'<span style="color:var(--muted);font-size:12px">—</span>'}</td></tr>`).join('');
+document.getElementById('pay-body').innerHTML=PAY.map(p=>`<tr><td>${esc(p.n)}</td><td><b>${esc(p.a)}</b></td><td><span class="tag ${p.s==='待审批'?'amber':'green'}">${esc(p.s)}</span></td><td>${p.s==='待审批'?'<button class="btn solid" style="padding:5px 11px;font-size:12px">一键审批</button>':'<span style="color:var(--muted);font-size:12px">—</span>'}</td></tr>`).join('');
+
+document.getElementById('roles-body').innerHTML=ROLES.map(r=>`<tr><td><b>${r.r}</b></td><td>${r.v}</td><td>${r.e}</td><td>${r.rp}</td><td>${r.ap}</td><td>${r.pay}</td><td>${r.pr}</td><td>${r.fin}</td><td>${r.rpt}</td><td>${r.acc}</td></tr>`).join('');
+document.getElementById('audit-body').innerHTML=AUDIT.map(a=>`<tr><td class="num">${a.t}</td><td><b>${esc(a.u)}</b></td><td><span class="tag emerald">${esc(a.a)}</span></td><td>${esc(a.o)}</td><td style="color:var(--muted)">${esc(a.d)}</td></tr>`).join('');
+
+/* 问卷中心 */
+const SURVEY_SATISFY=[
+  {c:'叶青总', who:'张经理', score:'5.0', s:'已填'},
+  {c:'周女士', who:'李医生', score:'4.8', s:'已填'},
+  {c:'王大姐', who:'李医生', score:'5.0', s:'已填'},
+  {c:'李女士', who:'李医生', score:'—', s:'待填'},
+];
+const SURVEY_SELF=[
+  {c:'陈先生', date:'2026-10-15', brief:'血脂偏高、运动少、饮食应酬多', s:'待审核'},
+  {c:'周女士', date:'2026-10-08', brief:'精力不足、睡眠一般，已上传体检报告', s:'已归档'},
+];
+document.getElementById('survey-satisfy-body').innerHTML=SURVEY_SATISFY.map(x=>`<tr><td><b>${esc(x.c)}</b></td><td>${esc(x.who)}</td><td>${x.score==='—'?'<span style="color:var(--muted)">—</span>':`<b>${x.score}</b>`}</td><td><span class="tag ${x.s==='已填'?'green':'amber'}">${x.s}</span></td></tr>`).join('');
+document.getElementById('survey-self-body').innerHTML=SURVEY_SELF.map(x=>`<tr><td><b>${esc(x.c)}</b></td><td>${esc(x.date)}</td><td style="color:var(--ink-2)">${esc(x.brief)}</td><td><span class="tag ${x.s==='已归档'?'green':'amber'}">${x.s}</span></td></tr>`).join('');
+
+/* 二期 · 集成与履约（占位） */
+const PRESCRIPTION=[
+  {c:'叶青总', doc:'王医生', content:'降脂用药 + 菌群调理医嘱', s:'已开方', buy:'合规购药'},
+  {c:'李女士', doc:'王医生', content:'血糖相关处方（凭身份证号在线开方）', s:'待开方', buy:'—'},
+];
+const PHYSICAL=[
+  {c:'周女士', pkg:'抗衰专项体检套餐', hosp:'公立三甲医院', t:'2026-11-03 08:30', pay:'¥3,800', s:'已预约'},
+  {c:'陈先生', pkg:'基础体检套餐', hosp:'公立三甲医院', t:'2026-10-30 08:00', pay:'¥1,200', s:'已预约'},
+];
+const MEETING=[
+  {c:'叶青总', topic:'三阶抗衰方案解读', t:'2026-11-02 14:00', link:'腾讯会议 · 已生成', rec:'已沉淀档案'},
+  {c:'刘清风总', topic:'复检结果解读', t:'2026-10-28 15:00', link:'腾讯会议 · 已生成', rec:'待回听'},
+];
+const LOGISTICS=[
+  {c:'叶青总', g:'N 系列 · 益生菌（×3）', from:'仓配中心', exp:'顺丰 SF1234567890', to:'上海浦东', s:'已签收'},
+  {c:'周女士', g:'畅系列 · 膳食纤维（×2）', from:'京东代购', exp:'京东 JD9876543210', to:'上海徐汇', s:'运输中'},
+];
+const DEVICE=[
+  {c:'叶青总', dev:'智能手表', sync:'2 分钟前', m:'心率 / 睡眠 / 步数'},
+  {c:'周女士', dev:'智能手环', sync:'1 小时前', m:'心率 / 血氧'},
+  {c:'刘清风总', dev:'IVD 检测仪', sync:'昨天', m:'尿酸 / 血糖'},
+];
+document.getElementById('prescription-body').innerHTML=PRESCRIPTION.map(x=>`<tr><td><b>${esc(x.c)}</b></td><td>${esc(x.doc)}</td><td>${esc(x.content)}</td><td><span class="tag ${x.s==='已开方'?'green':'amber'}">${x.s}</span></td><td>${x.buy==='—'?'<span style="color:var(--muted)">—</span>':`<button class="btn" style="padding:5px 11px;font-size:12px">${x.buy}</button>`}</td></tr>`).join('');
+document.getElementById('physical-body').innerHTML=PHYSICAL.map(x=>`<tr><td><b>${esc(x.c)}</b></td><td>${esc(x.pkg)}</td><td>${esc(x.hosp)}</td><td>${esc(x.t)}</td><td><b>${esc(x.pay)}</b></td><td><span class="tag green">${esc(x.s)}</span></td></tr>`).join('');
+document.getElementById('meeting-body').innerHTML=MEETING.map(x=>`<tr><td><b>${esc(x.c)}</b></td><td>${esc(x.topic)}</td><td>${esc(x.t)}</td><td style="color:var(--brand-700)">${esc(x.link)}</td><td><span class="tag ${x.rec.includes('已')?'green':'amber'}">${esc(x.rec)}</span></td></tr>`).join('');
+document.getElementById('logistics-body').innerHTML=LOGISTICS.map(x=>`<tr><td><b>${esc(x.c)}</b></td><td>${esc(x.g)}</td><td>${esc(x.from)}</td><td style="color:var(--ink-2)">${esc(x.exp)}</td><td>${esc(x.to)}</td><td><span class="tag ${x.s==='已签收'?'green':'amber'}">${x.s}</span></td></tr>`).join('');
+document.getElementById('device-body').innerHTML=DEVICE.map(x=>`<div class="card"><h3>${esc(x.c)}</h3><div class="sub" style="color:var(--brand-700);font-weight:600">${esc(x.dev)}</div><div class="kv"><div><div class="k">最近同步</div><div class="v">${esc(x.sync)}</div></div><div><div class="k">监测指标</div><div class="v">${esc(x.m)}</div></div></div></div>`).join('');
+
+/* AI 助手 */
+const CHAT_REPLIES=[
+  {kw:'疗程', reply:'叶总目前处于<b>第三疗程</b>（2026-06 起），FMT/菌群调理已完成一阶、二阶进行中，下次复检建议安排在 11 月上旬。'},
+  {kw:'提醒', reply:'近期待办：① 叶青总三阶方案审定（李医生，今日）② 陈先生生成方案框架（张经理，明日）③ 周女士复检预约（3 天后）。'},
+  {kw:'发票', reply:'本月已自动开具电子发票 12 张，其中 3 张待推送客户，可在「收费与发票」页查看详情。'},
+  {kw:'评分', reply:'叶青总 6 个月健康评分：尿酸 -39%、空腹血糖 -24%、总胆固醇 -22%，整体抗衰干预效果「显著改善」。'},
+];
+document.getElementById('chat-msgs').innerHTML=`<div class="msg ai"><div class="who">AI 助手</div>你好，我是蓝点荟 AI 助手。可以问我客户疗程、待办提醒、健康评分、发票等信息。</div>`;
+document.getElementById('chat-sugg').innerHTML=['叶总 FMT 第几个疗程？','今天有哪些待办提醒？','叶青总的健康评分','本月开了几张发票？'].map(s=>`<button data-q="${s}">${s}</button>`).join('');
+function chatReply(q){
+  const r=CHAT_REPLIES.find(x=>q.includes(x.kw));
+  return r?r.reply:'（原型示意）我会在正式版中接入真实数据。当前可尝试问我「疗程 / 提醒 / 评分 / 发票」相关问题。';
+}
+function sendChat(q){
+  const msgs=document.getElementById('chat-msgs'); if(!q.trim())return;
+  msgs.insertAdjacentHTML('beforeend',`<div class="msg user">${esc(q)}</div>`);
+  msgs.insertAdjacentHTML('beforeend',`<div class="msg ai"><div class="who">AI 助手</div>${chatReply(q)}</div>`);
+  msgs.scrollTop=msgs.scrollHeight;
+}
+document.getElementById('chat-send').onclick=()=>{ sendChat(document.getElementById('chat-input').value); document.getElementById('chat-input').value=''; };
+document.getElementById('chat-input').addEventListener('keydown',e=>{ if(e.key==='Enter'){ sendChat(e.target.value); e.target.value=''; } });
+document.getElementById('chat-sugg').onclick=e=>{ const b=e.target.closest('button'); if(b){ sendChat(b.dataset.q); } };
+</script>
+</body>
+</html>
