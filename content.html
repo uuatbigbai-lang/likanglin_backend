@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>内容页 / 报告推送</title>
+  <link rel="icon" href="data:,">
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 24px; background: #eef2f6; color: #172033; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    .page { max-width: 1080px; margin: 0 auto; display: grid; gap: 18px; }
+    .card { padding: 20px 22px; border-radius: 16px; background: #fff; box-shadow: 0 12px 28px rgba(16, 24, 40, .08); }
+    h1 { margin: 0; font-size: 24px; } .muted, .small { color: #667085; font-size: 14px; line-height: 22px; } .small { font-size: 12px; line-height: 18px; }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+    label { display: block; font-size: 13px; font-weight: 600; color: #344054; margin-bottom: 6px; }
+    label .req { color: #b42318; }
+    input, select, textarea { width: 100%; padding: 10px 12px; border: 1px solid #d0d5dd; border-radius: 10px; font: inherit; font-size: 14px; color: #172033; background: #fff; }
+    textarea { resize: vertical; min-height: 64px; }
+    input:focus, select:focus, textarea:focus { outline: none; border-color: #1b3558; box-shadow: 0 0 0 3px rgba(27, 53, 88, .1); }
+    .section-title { margin: 4px 0 14px; font-size: 16px; font-weight: 700; }
+    .divider { height: 1px; background: #e4e7ec; margin: 18px 0; }
+    button { font: inherit; height: 40px; padding: 0 16px; border: 0; border-radius: 10px; background: #1b3558; color: #fff; font-weight: 700; cursor: pointer; }
+    button.subtle { background: #e7eef8; color: #17314d; } button.danger { background: #fef3f2; color: #b42318; } button:disabled { opacity: .55; cursor: not-allowed; }
+    .toolbar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+    .notice { min-height: 22px; color: #175cd3; font-size: 14px; white-space: pre-wrap; } .notice.error { color: #b42318; }
+    .block-row { padding: 14px; border: 1px solid #e4e7ec; border-radius: 12px; margin-bottom: 12px; background: #fafbfc; }
+    .block-row .block-head { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; flex-wrap: wrap; }
+    .block-row .block-head select { width: 130px; } .block-row .block-head input.b-title { flex: 1; min-width: 160px; }
+    .block-row .block-head button { height: 34px; padding: 0 12px; }
+    .block-row .row-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .empty { padding: 28px; text-align: center; color: #667085; }
+    @media (max-width: 720px) { body { padding: 16px; } .grid-2, .grid-3, .block-row .row-fields { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <section class="card"><h1>内容页 / 报告推送</h1><div class="muted">填写报告内容与推送信息，保存后向目标用户发送「检测报告通知」订阅消息；也可只填推送信息单独触发推送。</div></section>
+
+    <section class="card">
+      <div class="section-title">基本信息</div>
+      <div class="grid-2">
+        <div><label>报告标识（pageKey）<span class="req">*</span></label><input id="pageKey" placeholder="如 report-20261024-001（字母开头，字母/数字/_-）"></div>
+        <div><label>报告标题</label><input id="title" placeholder="如 肠道微生态检测报告"></div>
+      </div>
+      <div class="grid-2" style="margin-top:14px;">
+        <div><label>目标用户 openid <span class="req">*</span></label><input id="openid" list="customerList" placeholder="从客户列表选择，或手动粘贴 openid"><datalist id="customerList"></datalist></div>
+        <div><label>关联订单号</label><input id="orderNo" placeholder="可选"></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="section-title">推送内容（检测报告通知模板）</div>
+      <div class="grid-3">
+        <div><label>报告名称</label><input id="reportName" placeholder="thing16"></div>
+        <div><label>检测编号</label><input id="checkNo" placeholder="character_string8"></div>
+        <div><label>受检人</label><input id="subjectName" placeholder="thing9"></div>
+      </div>
+      <div class="grid-2" style="margin-top:14px;">
+        <div><label>温馨提示</label><input id="tip" placeholder="thing11"></div>
+        <div><label>生成时间（留空则用当前时间）</label><input id="generateTime" placeholder="如 2026年10月24日 12:00"></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="section-title">内容块（文本 / 图片 / 视频 / PDF）</div>
+      <div id="blocksWrap"></div>
+      <div class="toolbar"><button id="addBlock" class="subtle" type="button">+ 添加内容块</button></div>
+    </section>
+
+    <section class="card">
+      <div class="toolbar">
+        <button id="loadBtn" class="subtle" type="button">加载已有配置</button>
+        <button id="savePushBtn" type="button">保存并推送</button>
+        <button id="pushOnlyBtn" class="subtle" type="button">仅推送（不保存内容）</button>
+      </div>
+      <div id="notice" class="notice" aria-live="polite" style="margin-top:12px;"></div>
+    </section>
+  </main>
+
+  <script>
+    const AUTH_STORAGE_KEY = 'admin-auth-v1';
+    const $ = (id) => document.getElementById(id);
+    const escapeHtml = (value) => String(value ?? '').replace(/[&<>'"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[c]));
+    const state = { token: '', customers: [], blockSeq: 0 };
+
+    function headers() { return { 'Content-Type': 'application/json', ...(state.token ? { 'x-admin-token': state.token } : {}) }; }
+    function readAuth() { try { return JSON.parse(localStorage.getItem(AUTH_STORAGE_KEY) || '{}').token || ''; } catch (_) { return ''; } }
+    function notice(message = '', error = false) { const el = $('notice'); el.textContent = message; el.classList.toggle('error', error); }
+    async function requestJson(url, options = {}) { const response = await fetch(url, options); const json = await response.json().catch(() => ({})); if (response.status === 401) { window.top.location.replace('/admin'); throw new Error('登录已过期'); } if (!response.ok || json.code !== 0) throw new Error(json.message || `请求失败：${response.status}`); return json; }
+
+    function blockRow(block) {
+      const index = ++state.blockSeq;
+      const type = block?.blockType || 'text';
+      const div = document.createElement('div');
+      div.className = 'block-row';
+      div.dataset.index = String(index);
+      div.innerHTML = `
+        <div class="block-head">
+          <span class="small" style="width:52px;">块 ${index}</span>
+          <select class="b-type">
+            <option value="text" ${type === 'text' ? 'selected' : ''}>文本</option>
+            <option value="image" ${type === 'image' ? 'selected' : ''}>图片</option>
+            <option value="video" ${type === 'video' ? 'selected' : ''}>视频</option>
+            <option value="pdf" ${type === 'pdf' ? 'selected' : ''}>PDF</option>
+          </select>
+          <input class="b-title" placeholder="标题" value="${escapeHtml(block?.title || '')}">
+          <button class="danger" type="button" data-action="remove">删除</button>
+        </div>
+        <div class="row-fields">
+          <textarea class="b-content" placeholder="文本正文 / 说明文字">${escapeHtml(block?.content || '')}</textarea>
+          <input class="b-media" placeholder="媒体地址（图片/视频/PDF 的文件名或完整地址）" value="${escapeHtml(block?.mediaUrl || '')}">
+        </div>`;
+      div.querySelector('[data-action="remove"]').addEventListener('click', () => div.remove());
+      return div;
+    }
+
+    function collectBlocks() {
+      const rows = Array.from(document.querySelectorAll('.block-row'));
+      return rows.map((row, index) => ({
+        blockType: row.querySelector('.b-type').value,
+        title: row.querySelector('.b-title').value.trim(),
+        content: row.querySelector('.b-content').value.trim(),
+        mediaUrl: row.querySelector('.b-media').value.trim(),
+        sort: index,
+      }));
+    }
+
+    function collectPush() {
+      return {
+        reportName: $('reportName').value.trim(),
+        checkNo: $('checkNo').value.trim(),
+        subjectName: $('subjectName').value.trim(),
+        tip: $('tip').value.trim(),
+        generateTime: $('generateTime').value.trim(),
+      };
+    }
+
+    function fillBlocks(blocks) {
+      $('blocksWrap').innerHTML = '';
+      state.blockSeq = 0;
+      if (!blocks || !blocks.length) { $('blocksWrap').innerHTML = '<div class="empty">暂无内容块，点下方「添加内容块」</div>'; return; }
+      blocks.forEach((block) => $('blocksWrap').appendChild(blockRow(block)));
+    }
+
+    async function loadCustomers() {
+      try {
+        const json = await requestJson('/api/admin/customers', { headers: headers() });
+        state.customers = json.data || [];
+        $('customerList').innerHTML = state.customers.map((c) => `<option value="${escapeHtml(c.openid)}">${escapeHtml(c.customerRemarkName || c.nickName || '未命名客户')}（${escapeHtml(c.phoneNumber || '')}）</option>`).join('');
+      } catch (err) { console.warn('加载客户列表失败:', err.message); }
+    }
+
+    async function loadPage() {
+      const pageKey = $('pageKey').value.trim();
+      if (!pageKey) return notice('请先填写报告标识 pageKey', true);
+      notice('加载中…');
+      const json = await requestJson(`/api/content/page/${encodeURIComponent(pageKey)}`, { headers: headers() });
+      const { page, blocks } = json.data || {};
+      $('title').value = page?.title || '';
+      $('openid').value = page?.openid || '';
+      $('orderNo').value = page?.orderNo || '';
+      const push = page?.pushData || {};
+      $('reportName').value = push.reportName || '';
+      $('checkNo').value = push.checkNo || '';
+      $('subjectName').value = push.subjectName || '';
+      $('tip').value = push.tip || '';
+      $('generateTime').value = push.generateTime || '';
+      fillBlocks(blocks || []);
+      notice('已加载，修改后可重新保存推送');
+    }
+
+    async function saveAndPush() {
+      const pageKey = $('pageKey').value.trim();
+      const openid = $('openid').value.trim();
+      if (!pageKey) return notice('请填写报告标识 pageKey', true);
+      if (!/^[a-zA-Z][a-zA-Z0-9_-]{1,63}$/.test(pageKey)) return notice('pageKey 需字母开头，仅含字母/数字/_-', true);
+      if (!openid) return notice('请填写目标用户 openid', true);
+      const blocks = collectBlocks();
+      if (!blocks.length) return notice('请至少添加一个内容块', true);
+
+      const btn = $('savePushBtn'); btn.disabled = true;
+      try {
+        notice('正在保存并推送…');
+        const json = await requestJson(`/api/content/page/${encodeURIComponent(pageKey)}`, {
+          method: 'POST', headers: headers(),
+          body: JSON.stringify({ title: $('title').value.trim(), openid, orderNo: $('orderNo').value.trim(), push: collectPush(), blocks }),
+        });
+        const push = json.data?.push;
+        const pushOk = push && Number(push.errcode || 0) === 0;
+        notice(`✅ 内容已保存。${pushOk ? '订阅消息推送成功' : `推送：${push?.errmsg || push?.errcode || '未触发'}`}`, !pushOk);
+      } catch (err) { notice(`保存失败：${err.message}`, true); } finally { btn.disabled = false; }
+    }
+
+    async function pushOnly() {
+      const openid = $('openid').value.trim();
+      if (!openid) return notice('请填写目标用户 openid', true);
+      const btn = $('pushOnlyBtn'); btn.disabled = true;
+      try {
+        notice('正在推送…');
+        await requestJson('/api/subscribe/send', {
+          method: 'POST', headers: headers(),
+          body: JSON.stringify({ openid, pageKey: $('pageKey').value.trim(), push: collectPush() }),
+        });
+        notice('✅ 订阅消息推送成功');
+      } catch (err) { notice(`推送失败：${err.message}`, true); } finally { btn.disabled = false; }
+    }
+
+    $('addBlock').addEventListener('click', () => { const empty = $('blocksWrap').querySelector('.empty'); if (empty) empty.remove(); $('blocksWrap').appendChild(blockRow()); });
+    $('loadBtn').addEventListener('click', () => loadPage().catch((err) => notice(err.message, true)));
+    $('savePushBtn').addEventListener('click', saveAndPush);
+    $('pushOnlyBtn').addEventListener('click', pushOnly);
+
+    state.token = readAuth();
+    if (!state.token) { window.top.location.replace('/admin'); } else { loadCustomers(); fillBlocks([]); }
+  </script>
+</body>
+</html>

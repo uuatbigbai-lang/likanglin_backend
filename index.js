@@ -2442,6 +2442,10 @@ app.get('/admin/invite-scenes', (req, res) => {
   res.sendFile(path.join(__dirname, 'invite-scenes.html'));
 });
 
+app.get('/admin/content', (req, res) => {
+  res.sendFile(path.join(__dirname, 'content.html'));
+});
+
 app.get('/admin/demo', (req, res) => {
   res.sendFile(path.join(__dirname, 'demo.html'));
 });
