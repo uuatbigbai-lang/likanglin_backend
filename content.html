@@ -29,6 +29,10 @@
     .block-row .block-head select { width: 130px; } .block-row .block-head input.b-title { flex: 1; min-width: 160px; }
     .block-row .block-head button { height: 34px; padding: 0 12px; }
     .block-row .row-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .media-field { display: flex; gap: 8px; align-items: center; }
+    .media-field input.b-media { flex: 1; min-width: 0; }
+    .media-field .b-upload { height: 40px; padding: 0 14px; flex: none; }
+    .upload-result-input { flex: 1; min-width: 0; }
     .empty { padding: 28px; text-align: center; color: #667085; }
     @media (max-width: 720px) { body { padding: 16px; } .grid-2, .grid-3, .block-row .row-fields { grid-template-columns: 1fr; } }
   </style>
@@ -69,6 +73,22 @@
     </section>
 
     <section class="card">
+      <div class="section-title">媒体文件上传（图片 / 视频 / PDF）</div>
+      <div class="muted">上传到云存储 contentMedia/ 目录，返回相对路径，可填入上方内容块的「媒体地址」；也可直接点内容块里的「上传」按钮自动填充。</div>
+      <div class="toolbar" style="margin-top:12px;">
+        <input id="standaloneFile" type="file" accept="image/*,video/*,.pdf" style="flex:1;min-width:220px;">
+        <button id="standaloneUpload" class="subtle" type="button">上传</button>
+      </div>
+      <div id="uploadResultWrap" style="margin-top:12px;display:none;">
+        <label>媒体地址（复制后填入内容块的「媒体地址」）</label>
+        <div class="toolbar">
+          <input id="uploadResult" readonly class="upload-result-input" onclick="this.select()">
+          <button id="copyResult" class="subtle" type="button">复制</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
       <div class="toolbar">
         <button id="loadBtn" class="subtle" type="button">加载已有配置</button>
         <button id="savePushBtn" type="button">保存并推送</button>
@@ -88,6 +108,29 @@
     function readAuth() { try { return JSON.parse(localStorage.getItem(AUTH_STORAGE_KEY) || '{}').token || ''; } catch (_) { return ''; } }
     function notice(message = '', error = false) { const el = $('notice'); el.textContent = message; el.classList.toggle('error', error); }
     async function requestJson(url, options = {}) { const response = await fetch(url, options); const json = await response.json().catch(() => ({})); if (response.status === 401) { window.top.location.replace('/admin'); throw new Error('登录已过期'); } if (!response.ok || json.code !== 0) throw new Error(json.message || `请求失败：${response.status}`); return json; }
+
+    function acceptForType(type) {
+      if (type === 'image') return 'image/*';
+      if (type === 'video') return 'video/*';
+      if (type === 'pdf') return '.pdf,application/pdf';
+      return '*/*';
+    }
+
+    async function uploadFile(file) {
+      const buffer = await file.arrayBuffer();
+      const response = await fetch(`/api/content/upload?filename=${encodeURIComponent(file.name)}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': file.type || 'application/octet-stream',
+          ...(state.token ? { 'x-admin-token': state.token } : {}),
+        },
+        body: buffer,
+      });
+      const json = await response.json().catch(() => ({}));
+      if (response.status === 401) { window.top.location.replace('/admin'); throw new Error('登录已过期'); }
+      if (!response.ok || json.code !== 0) throw new Error(json.message || `上传失败：${response.status}`);
+      return json.data;
+    }
 
     function blockRow(block) {
       const index = ++state.blockSeq;
@@ -109,9 +152,35 @@
         </div>
         <div class="row-fields">
           <textarea class="b-content" placeholder="文本正文 / 说明文字">${escapeHtml(block?.content || '')}</textarea>
-          <input class="b-media" placeholder="媒体地址（图片/视频/PDF 的文件名或完整地址）" value="${escapeHtml(block?.mediaUrl || '')}">
+          <div class="media-field">
+            <input class="b-media" placeholder="媒体地址（上传后自动填充，或手动粘贴文件名/地址）" value="${escapeHtml(block?.mediaUrl || '')}">
+            <button class="b-upload subtle" type="button">上传</button>
+            <input class="b-media-file" type="file" hidden>
+          </div>
         </div>`;
       div.querySelector('[data-action="remove"]').addEventListener('click', () => div.remove());
+      div.querySelector('.b-upload').addEventListener('click', () => {
+        const fileInput = div.querySelector('.b-media-file');
+        fileInput.accept = acceptForType(div.querySelector('.b-type').value);
+        fileInput.value = '';
+        fileInput.click();
+      });
+      div.querySelector('.b-media-file').addEventListener('change', async () => {
+        const file = div.querySelector('.b-media-file').files[0];
+        if (!file) return;
+        const btn = div.querySelector('.b-upload');
+        const original = btn.textContent;
+        btn.disabled = true; btn.textContent = '上传中…';
+        try {
+          const data = await uploadFile(file);
+          div.querySelector('.b-media').value = data.mediaUrl || '';
+          notice(`✅ 已上传：${data.mediaUrl}`);
+        } catch (err) {
+          notice(`上传失败：${err.message}`, true);
+        } finally {
+          btn.disabled = false; btn.textContent = original;
+        }
+      });
       return div;
     }
 
@@ -210,6 +279,38 @@
     $('loadBtn').addEventListener('click', () => loadPage().catch((err) => notice(err.message, true)));
     $('savePushBtn').addEventListener('click', saveAndPush);
     $('pushOnlyBtn').addEventListener('click', pushOnly);
+
+    $('standaloneUpload').addEventListener('click', async () => {
+      const input = $('standaloneFile');
+      const file = input.files[0];
+      if (!file) return notice('请先选择要上传的文件', true);
+      const btn = $('standaloneUpload');
+      const original = btn.textContent;
+      btn.disabled = true; btn.textContent = '上传中…';
+      try {
+        notice('上传中…');
+        const data = await uploadFile(file);
+        $('uploadResult').value = data.mediaUrl || '';
+        $('uploadResultWrap').style.display = 'block';
+        notice(`✅ 已上传：${data.mediaUrl}`);
+      } catch (err) {
+        notice(`上传失败：${err.message}`, true);
+      } finally {
+        btn.disabled = false; btn.textContent = original;
+      }
+    });
+
+    $('copyResult').addEventListener('click', async () => {
+      const value = $('uploadResult').value;
+      if (!value) return;
+      try {
+        await navigator.clipboard.writeText(value);
+        notice('✅ 已复制到剪贴板');
+      } catch (_) {
+        $('uploadResult').select();
+        notice('已选中，请手动复制（Ctrl/Cmd+C）');
+      }
+    });
 
     state.token = readAuth();
     if (!state.token) { window.top.location.replace('/admin'); } else { loadCustomers(); fillBlocks([]); }

@@ -34,6 +34,7 @@ const {
   SubscribeRecord,
 } = require('./db');
 const { withCloudHomeAssetPicture, withCloudHomeBannerPicture, withCloudProductPictures, withCloudContentBlock } = require('./productPictures');
+const { uploadContentMedia } = require('./contentStorage');
 const {
   wxPayConfig,
   isWxPayConfigured,
@@ -4015,6 +4016,28 @@ app.post('/api/home/banners/seed', async (req, res) => {
 
     await HomeBanner.bulkCreate(seedData);
     res.send({ code: 0, message: '首页 Banner 种子数据初始化成功', data: { count: seedData.length } });
+  } catch (err) {
+    res.send({ code: -1, message: err.message });
+  }
+});
+
+// 上传内容页媒体文件（图片/PDF/视频）到云存储，返回可填入 mediaUrl 的相对路径（管理员）
+app.post('/api/content/upload', adminAuth, express.raw({ type: () => true, limit: '100mb' }), async (req, res) => {
+  try {
+    const buffer = req.body;
+    if (!Buffer.isBuffer(buffer) || buffer.length === 0) {
+      return res.send({ code: -1, message: '缺少文件内容' });
+    }
+    const filename = String(req.query.filename || req.headers['x-file-name'] || '').trim();
+    if (!filename) {
+      return res.send({ code: -1, message: '缺少 filename 参数' });
+    }
+    const result = await uploadContentMedia(buffer, {
+      filename,
+      contentType: String(req.headers['content-type'] || '').split(';')[0].trim(),
+      dir: String(req.query.dir || '').trim(),
+    });
+    res.send({ code: 0, data: result });
   } catch (err) {
     res.send({ code: -1, message: err.message });
   }
