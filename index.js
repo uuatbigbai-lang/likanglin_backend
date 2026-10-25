@@ -3645,6 +3645,45 @@ app.get('/api/admin/customers', adminAuth, async (req, res) => {
   } catch (err) { res.send({ code: -1, message: err.message }); }
 });
 
+// 已订阅「检测报告通知」订阅消息的用户列表（管理员，用于选择推送目标）
+app.get('/api/admin/subscribers', adminAuth, async (req, res) => {
+  try {
+    const records = await SubscribeRecord.findAll({
+      where: { status: 1 },
+      order: [['createdAt', 'DESC']],
+      limit: 1000,
+    });
+    // 同一 openid 可能有多条订阅记录，按最新一条去重
+    const latestByOpenid = new Map();
+    records.forEach((record) => {
+      if (!latestByOpenid.has(record.openid)) latestByOpenid.set(record.openid, record);
+    });
+    const openids = Array.from(latestByOpenid.keys());
+    const users = await User.findAll({
+      where: { openid: openids },
+      attributes: ['openid', 'nickName', 'phoneNumber', 'remarkName'],
+    });
+    const userMap = new Map(users.map((user) => [user.openid, user.toJSON()]));
+
+    const data = openids.map((openid) => {
+      const record = latestByOpenid.get(openid);
+      const user = userMap.get(openid) || {};
+      return {
+        openid,
+        nickName: user.nickName || '',
+        phoneNumber: user.phoneNumber || '',
+        customerRemarkName: user.remarkName || '',
+        templateId: record.templateId || '',
+        orderNo: record.orderNo || '',
+        subscribedAt: record.createdAt || null,
+      };
+    });
+    res.send({ code: 0, data });
+  } catch (err) {
+    res.send({ code: -1, message: err.message });
+  }
+});
+
 app.post('/api/admin/customers/:openid/remark-name', adminAuth, async (req, res) => {
   try {
     const openid = String(req.params.openid || '').trim();
@@ -4178,14 +4217,18 @@ const SUBSCRIBE_SEND_ERRORS = {
   47003: '模板参数不完整或不正确',
 };
 
-// 手动触发「检测报告通知」订阅消息（管理员，独立于内容上传）
+// 手动触发「检测报告通知」订阅消息（管理员，独立于内容上传）。
+// 支持单个 openid 或 openids 数组批量推送。
 app.post('/api/subscribe/send', adminAuth, async (req, res) => {
   try {
-    const { openid = '', pageKey = '', push = {} } = req.body || {};
-    const targetOpenid = String(openid || '').trim();
-    if (!targetOpenid) {
+    const { openid = '', openids, pageKey = '', push = {} } = req.body || {};
+    const targets = (Array.isArray(openids) && openids.length ? openids : [openid])
+      .map((item) => String(item || '').trim())
+      .filter(Boolean);
+    if (!targets.length) {
       return res.send({ code: -1, message: '缺少 openid' });
     }
+
     const pushData = {
       reportName: String(push.reportName || '').trim(),
       checkNo: String(push.checkNo || '').trim(),
@@ -4194,21 +4237,25 @@ app.post('/api/subscribe/send', adminAuth, async (req, res) => {
       generateTime: String(push.generateTime || '').trim(),
     };
 
-    let result;
-    try {
-      result = await sendReportNotify({ openid: targetOpenid, pageKey: String(pageKey || '').trim(), pushData });
-    } catch (err) {
-      return res.send({ code: -1, message: `推送请求失败：${err.message}` });
+    const results = [];
+    for (const targetOpenid of targets) {
+      let result;
+      try {
+        result = await sendReportNotify({ openid: targetOpenid, pageKey: String(pageKey || '').trim(), pushData });
+      } catch (err) {
+        result = { errcode: -1, errmsg: err.message };
+      }
+      const errcode = Number(result.errcode || 0);
+      results.push({ openid: targetOpenid, errcode, errmsg: SUBSCRIBE_SEND_ERRORS[errcode] || result.errmsg || '' });
+      console.log(`${errcode === 0 ? '📣' : '⚠️'} 手动触发检测报告订阅消息: ${targetOpenid}`, result);
     }
 
-    const errcode = Number(result.errcode || 0);
-    const ok = errcode === 0;
-    const message = ok
-      ? '推送成功'
-      : `推送失败：${SUBSCRIBE_SEND_ERRORS[errcode] || result.errmsg || `errcode ${errcode}`}`;
+    const okCount = results.filter((item) => item.errcode === 0).length;
+    const message = okCount === results.length
+      ? `推送成功 ${okCount} 人`
+      : `成功 ${okCount}/${results.length} 人`;
 
-    console.log(`${ok ? '📣' : '⚠️'} 手动触发检测报告订阅消息: ${targetOpenid}`, result);
-    res.send({ code: ok ? 0 : -1, message, data: result });
+    res.send({ code: 0, message, data: { results, okCount, total: results.length } });
   } catch (err) {
     res.send({ code: -1, message: err.message });
   }

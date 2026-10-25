@@ -33,6 +33,14 @@
     .media-field input.b-media { flex: 1; min-width: 0; }
     .media-field .b-upload { height: 40px; padding: 0 14px; flex: none; }
     .upload-result-input { flex: 1; min-width: 0; }
+    .subscriber-list { display: grid; gap: 6px; max-height: 340px; overflow: auto; }
+    .subscriber-row { display: flex; gap: 10px; align-items: center; padding: 8px 10px; border: 1px solid #e4e7ec; border-radius: 10px; background: #fafbfc; cursor: pointer; }
+    .subscriber-row:hover { border-color: #1b3558; }
+    .subscriber-row .sub-check { width: auto; flex: none; }
+    .subscriber-row .sub-name { font-weight: 600; min-width: 100px; }
+    .subscriber-row .sub-phone { color: #667085; min-width: 110px; }
+    .subscriber-row .sub-time { color: #98a2b3; font-size: 12px; margin-left: auto; }
+    .subscriber-row .sub-fill { flex: none; height: 30px; padding: 0 10px; }
     .empty { padding: 28px; text-align: center; color: #667085; }
     @media (max-width: 720px) { body { padding: 16px; } .grid-2, .grid-3, .block-row .row-fields { grid-template-columns: 1fr; } }
   </style>
@@ -51,6 +59,16 @@
         <div><label>目标用户 openid <span class="req">*</span></label><input id="openid" list="customerList" placeholder="从客户列表选择，或手动粘贴 openid"><datalist id="customerList"></datalist></div>
         <div><label>关联订单号</label><input id="orderNo" placeholder="可选"></div>
       </div>
+    </section>
+
+    <section class="card">
+      <div class="section-title">已订阅推送用户（<span id="subscriberCount">0</span>）</div>
+      <div class="muted">以下用户已授权接收「检测报告通知」订阅消息。点「选择」填入目标用户（单个推送），或勾选多个后批量推送。</div>
+      <div class="toolbar" style="margin-top:12px;">
+        <label class="small" style="display:flex;align-items:center;gap:6px;cursor:pointer;"><input type="checkbox" id="selectAllSubs" style="width:auto;"> 全选</label>
+        <button id="pushSelected" class="subtle" type="button">批量推送所选</button>
+      </div>
+      <div id="subscriberList" class="subscriber-list" style="margin-top:12px;"></div>
     </section>
 
     <section class="card">
@@ -102,11 +120,12 @@
     const AUTH_STORAGE_KEY = 'admin-auth-v1';
     const $ = (id) => document.getElementById(id);
     const escapeHtml = (value) => String(value ?? '').replace(/[&<>'"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[c]));
-    const state = { token: '', customers: [], blockSeq: 0 };
+    const state = { token: '', customers: [], subscribers: [], blockSeq: 0 };
 
     function headers() { return { 'Content-Type': 'application/json', ...(state.token ? { 'x-admin-token': state.token } : {}) }; }
     function readAuth() { try { return JSON.parse(localStorage.getItem(AUTH_STORAGE_KEY) || '{}').token || ''; } catch (_) { return ''; } }
     function notice(message = '', error = false) { const el = $('notice'); el.textContent = message; el.classList.toggle('error', error); }
+    function formatDate(value) { if (!value) return ''; const d = new Date(value); if (Number.isNaN(d.getTime())) return ''; const pad = (n) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`; }
     async function requestJson(url, options = {}) { const response = await fetch(url, options); const json = await response.json().catch(() => ({})); if (response.status === 401) { window.top.location.replace('/admin'); throw new Error('登录已过期'); } if (!response.ok || json.code !== 0) throw new Error(json.message || `请求失败：${response.status}`); return json; }
 
     function acceptForType(type) {
@@ -220,6 +239,47 @@
       } catch (err) { console.warn('加载客户列表失败:', err.message); }
     }
 
+    function selectedSubscriberOpenids() {
+      return Array.from(document.querySelectorAll('.sub-check:checked')).map((el) => el.dataset.openid).filter(Boolean);
+    }
+
+    function renderSubscribers(list) {
+      $('subscriberCount').textContent = String(list.length);
+      const wrap = $('subscriberList');
+      if (!list || !list.length) { wrap.innerHTML = '<div class="empty">暂无已订阅用户</div>'; return; }
+      wrap.innerHTML = list.map((s) => `
+        <div class="subscriber-row">
+          <input type="checkbox" class="sub-check" style="width:auto;" data-openid="${escapeHtml(s.openid)}">
+          <span class="sub-name">${escapeHtml(s.customerRemarkName || s.nickName || '未命名用户')}</span>
+          <span class="sub-phone">${escapeHtml(s.phoneNumber || '')}</span>
+          <span class="sub-time">${escapeHtml(formatDate(s.subscribedAt))}</span>
+          <button type="button" class="sub-fill subtle">选择</button>
+        </div>`).join('');
+      wrap.querySelectorAll('.subscriber-row').forEach((row) => {
+        row.addEventListener('click', (e) => {
+          if (e.target.matches('.sub-check, button')) return;
+          const box = row.querySelector('.sub-check');
+          box.checked = !box.checked;
+        });
+        row.querySelector('.sub-fill').addEventListener('click', () => {
+          const openid = row.querySelector('.sub-check').dataset.openid;
+          $('openid').value = openid;
+          notice('✅ 已选中该用户作为目标用户（可在下方「保存并推送」）');
+        });
+      });
+    }
+
+    async function loadSubscribers() {
+      try {
+        const json = await requestJson('/api/admin/subscribers', { headers: headers() });
+        state.subscribers = json.data || [];
+        renderSubscribers(state.subscribers);
+      } catch (err) {
+        $('subscriberCount').textContent = '加载失败';
+        notice(`加载已订阅用户失败：${err.message}`, true);
+      }
+    }
+
     async function loadPage() {
       const pageKey = $('pageKey').value.trim();
       if (!pageKey) return notice('请先填写报告标识 pageKey', true);
@@ -262,23 +322,41 @@
     }
 
     async function pushOnly() {
-      const openid = $('openid').value.trim();
-      if (!openid) return notice('请填写目标用户 openid', true);
+      const selected = selectedSubscriberOpenids();
+      const targets = selected.length ? selected : [$('openid').value.trim()].filter(Boolean);
+      if (!targets.length) return notice('请先勾选已订阅用户，或填写目标用户 openid', true);
       const btn = $('pushOnlyBtn'); btn.disabled = true;
       try {
-        notice('正在推送…');
-        await requestJson('/api/subscribe/send', {
+        notice(`正在推送 ${targets.length} 人…`);
+        const json = await requestJson('/api/subscribe/send', {
           method: 'POST', headers: headers(),
-          body: JSON.stringify({ openid, pageKey: $('pageKey').value.trim(), push: collectPush() }),
+          body: JSON.stringify({ openids: targets, pageKey: $('pageKey').value.trim(), push: collectPush() }),
         });
-        notice('✅ 订阅消息推送成功');
+        const { results = [], okCount = 0, total = 0 } = json.data || {};
+        const failed = results.filter((r) => Number(r.errcode || 0) !== 0);
+        if (failed.length) {
+          notice(`⚠️ ${json.message || `成功 ${okCount}/${total} 人`}；失败：${failed.map((r) => `${r.openid}（${r.errmsg || r.errcode}）`).join('；')}`, true);
+        } else {
+          notice(`✅ ${json.message || `推送成功 ${total} 人`}`);
+        }
       } catch (err) { notice(`推送失败：${err.message}`, true); } finally { btn.disabled = false; }
+    }
+
+    function pushSelected() {
+      const selected = selectedSubscriberOpenids();
+      if (!selected.length) return notice('请先勾选要推送的用户', true);
+      pushOnly();
     }
 
     $('addBlock').addEventListener('click', () => { const empty = $('blocksWrap').querySelector('.empty'); if (empty) empty.remove(); $('blocksWrap').appendChild(blockRow()); });
     $('loadBtn').addEventListener('click', () => loadPage().catch((err) => notice(err.message, true)));
     $('savePushBtn').addEventListener('click', saveAndPush);
     $('pushOnlyBtn').addEventListener('click', pushOnly);
+    $('pushSelected').addEventListener('click', pushSelected);
+    $('selectAllSubs').addEventListener('change', () => {
+      const checked = $('selectAllSubs').checked;
+      document.querySelectorAll('.sub-check').forEach((box) => { box.checked = checked; });
+    });
 
     $('standaloneUpload').addEventListener('click', async () => {
       const input = $('standaloneFile');
@@ -313,7 +391,7 @@
     });
 
     state.token = readAuth();
-    if (!state.token) { window.top.location.replace('/admin'); } else { loadCustomers(); fillBlocks([]); }
+    if (!state.token) { window.top.location.replace('/admin'); } else { loadCustomers(); loadSubscribers(); fillBlocks([]); }
   </script>
 </body>
 </html>
